@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package fraud.worker.v1;
+
+option go_package = "github.com/pranavkkp4/distributed-fraud-detection/serving_plane/worker/proto;workerpb";
+
+service InferenceWorker {
+  rpc Score(ScoreRequest) returns (ScoreResponse);
+}
+
+message FeatureRequest {
+  repeated double features = 1;
+  double transaction_amount = 2;
+}
+
+message ScoreRequest {
+  repeated FeatureRequest requests = 1;
+}
+
+message Explanation {
+  uint32 feature_index = 1;
+  double impact = 2;
+}
+
+message Score {
+  double score = 1;
+  double confidence = 2;
+  repeated Explanation explanation = 3;
+  string model = 4;
+  string calibration_version = 5;
+  string policy_version = 6;
+  string feature_version = 7;
+  bool fallback = 8;
+  string fallback_reason = 9;
+}
+
+message ScoreResponse {
+  repeated Score results = 1;
+}
