@@ -20,6 +20,7 @@ class SharedRing final {
   // The producer calls this only after it has acquired p+2 and copied its
   // response. This prevents a subsequent request from overwriting the result.
   bool release(SlotMetadata& slot, std::uint64_t position) noexcept;
+  [[nodiscard]] const SharedHeader& header() const noexcept { return header_; }
 
  private:
   SharedHeader& header_;

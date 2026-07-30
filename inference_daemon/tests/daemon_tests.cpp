@@ -1,6 +1,9 @@
 #include "fraud_daemon/batcher.hpp"
 #include "fraud_daemon/memory_pool.hpp"
 #include "fraud_daemon/shared_memory.hpp"
+#include "fraud_daemon/transaction.hpp"
+
+#include "transaction_generated.h"
 
 #include <array>
 #include <atomic>
@@ -81,5 +84,45 @@ void test_memory_pool() {
   MemoryPool pool(4096); auto* value = pool.make<std::uint64_t>(55); CHECK(*value == 55); CHECK(pool.used() >= sizeof(*value));
   ArenaAllocator<int> allocator(pool); int* number = allocator.allocate(1); *number = 9; CHECK(*number == 9);
 }
+
+std::vector<std::uint8_t> encoded_transaction(std::uint64_t request_id, std::int64_t amount_micros) {
+  flatbuffers::FlatBufferBuilder builder;
+  const auto transaction_id = builder.CreateString("tx-unit-1");
+  const auto account_id = builder.CreateString("acct-unit");
+  const auto currency = builder.CreateString("USD");
+  const auto category = builder.CreateString("retail");
+  const auto transaction = fraud::ipc::CreateTransaction(builder, request_id, transaction_id, account_id,
+                                                           amount_micros, currency, 99, category);
+  fraud::ipc::FinishTransactionBuffer(builder, transaction);
+  return std::vector<std::uint8_t>(builder.GetBufferPointer(),
+                                   builder.GetBufferPointer() + builder.GetSize());
 }
-int main() { test_abi_and_ring(); test_mpmc_bounded(); test_deadline_and_hot_path(); test_memory_pool(); return failures == 0 ? 0 : 1; }
+
+void test_transaction_verification_and_reference_result() {
+  Segment segment(4, 1024);
+  SlotMetadata* slot = slot_at(segment.header, 0);
+  const auto payload = encoded_transaction(77, 12'340'000);
+  CHECK(payload.size() <= segment.header->slot_size - kSlotMetadataBytes);
+  slot->payload_offset = kSlotMetadataBytes;
+  slot->payload_size = static_cast<std::uint32_t>(payload.size());
+  slot->request_id = 77;
+  std::memcpy(reinterpret_cast<std::byte*>(slot) + slot->payload_offset, payload.data(), payload.size());
+  TransactionView decoded{};
+  CHECK(decode_transaction(*segment.header, *slot, decoded));
+  CHECK(decoded.request_id == 77 && decoded.transaction_id == "tx-unit-1");
+  CHECK(decoded.account_id == "acct-unit" && decoded.currency == "USD");
+  CHECK(decoded.amount_micros == 12'340'000 && decoded.occurred_at_ns == 99);
+  CHECK(reference_decision(decoded) == 1U && reference_score(decoded) == 0.9F);
+
+  // The verifier rejects both malformed schema data and an out-of-slot range
+  // before the daemon can inspect a pointer into shared memory.
+  auto* bytes = reinterpret_cast<std::uint8_t*>(slot) + slot->payload_offset;
+  bytes[4] ^= 0x01U;  // corrupt the FRTX identifier
+  CHECK(!decode_transaction(*segment.header, *slot, decoded));
+  bytes[4] ^= 0x01U;
+  slot->payload_offset = segment.header->slot_size - 1;
+  slot->payload_size = 2;
+  CHECK(!decode_transaction(*segment.header, *slot, decoded));
+}
+}
+int main() { test_abi_and_ring(); test_mpmc_bounded(); test_deadline_and_hot_path(); test_memory_pool(); test_transaction_verification_and_reference_result(); return failures == 0 ? 0 : 1; }

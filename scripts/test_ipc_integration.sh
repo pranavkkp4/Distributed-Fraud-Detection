@@ -131,6 +131,57 @@ if [[ "$ready" != true ]]; then
   exit 1
 fi
 
+# Publish one malformed FRTX payload through the same System V ring before the
+# authenticated HTTP traffic. This is a single-producer CI probe; sequence is
+# stored last so the daemon cannot observe partially initialized metadata.
+python3 - "$ipc_key" <<'PY'
+import ctypes
+import sys
+import time
+
+key = int(sys.argv[1], 0)
+libc = ctypes.CDLL(None, use_errno=True)
+libc.shmget.argtypes = (ctypes.c_int, ctypes.c_size_t, ctypes.c_int)
+libc.shmget.restype = ctypes.c_int
+libc.shmat.argtypes = (ctypes.c_int, ctypes.c_void_p, ctypes.c_int)
+libc.shmat.restype = ctypes.c_void_p
+libc.shmdt.argtypes = (ctypes.c_void_p,)
+shmid = libc.shmget(key, 0, 0)
+if shmid < 0:
+    raise SystemExit("missing daemon segment")
+base = libc.shmat(shmid, None, 0)
+if base == ctypes.c_void_p(-1).value:
+    raise SystemExit("shmat failed")
+try:
+    header_bytes = ctypes.c_uint32.from_address(base + 8).value
+    slot_count = ctypes.c_uint32.from_address(base + 12).value
+    slot_bytes = ctypes.c_uint32.from_address(base + 16).value
+    assert header_bytes == 320 and slot_count >= 4 and slot_bytes >= 72
+    enqueue = ctypes.c_uint64.from_address(base + 64)
+    ready = ctypes.c_uint64.from_address(base + 192)
+    assert enqueue.value == 0 and ready.value == 0, (enqueue.value, ready.value)
+    slot = base + header_bytes
+    sequence = ctypes.c_uint64.from_address(slot)
+    assert sequence.value == 0
+    ctypes.c_uint32.from_address(slot + 8).value = 64
+    ctypes.c_uint32.from_address(slot + 12).value = 8
+    ctypes.c_uint32.from_address(slot + 16).value = 0xffffffff
+    ctypes.c_uint64.from_address(slot + 32).value = 0xfeedbeef
+    ctypes.c_uint64.from_address(slot + 40).value = time.monotonic_ns()
+    ctypes.memmove(slot + 64, b"BADFRTX!", 8)
+    enqueue.value = 1
+    ready.value = 1
+    sequence.value = 1
+    deadline = time.monotonic() + 2.0
+    while sequence.value != 2 and time.monotonic() < deadline:
+        time.sleep(0.001)
+    assert sequence.value == 2, sequence.value
+    assert ctypes.c_uint32.from_address(slot + 16).value == 422
+    sequence.value = slot_count
+finally:
+    libc.shmdt(base)
+PY
+
 payload='{"transaction_id":"ci-ipc-1","account_id":"acct-ci","amount_micros":12340000,"currency":"USD","occurred_at_ns":1735689600000000000,"merchant_category":"retail"}'
 unauthorized_status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
   -H 'content-type: application/json' --data "$payload" "$base_url/v1/transactions")"
@@ -146,8 +197,8 @@ import math
 import sys
 body = json.loads(sys.argv[1])
 assert body["status"] == 200, body
-assert body["decision"] in (0, 1), body
-assert math.isfinite(body["score"]), body
+assert body["decision"] == 1, body
+assert math.isclose(body["score"], 0.9, rel_tol=0, abs_tol=1e-6), body
 assert body["request_id"] > 0 and body["completed_ns"] > 0, body
 PY
 done

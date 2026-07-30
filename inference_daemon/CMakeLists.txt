@@ -2,17 +2,35 @@ cmake_minimum_required(VERSION 3.24)
 project(fraud_inference_daemon LANGUAGES CXX)
 
 include(CTest)
+include(FetchContent)
 
 option(FRAUD_DAEMON_ENABLE_CUDA "Build CUDA graph and CUTLASS integrations" OFF)
 option(FRAUD_DAEMON_ENABLE_CUTLASS "Build the CUTLASS INT8 GEMM wrapper" OFF)
+
+# The daemon verifies the Transaction FlatBuffer in-place.  FlatBuffers is
+# header-only for this use; pin the source archive and its content hash rather
+# than accepting an ambient system package or an unpinned generated header.
+set(FLATBUFFERS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(FLATBUFFERS_BUILD_FLATC OFF CACHE BOOL "" FORCE)
+set(FLATBUFFERS_BUILD_FLATLIB OFF CACHE BOOL "" FORCE)
+set(FLATBUFFERS_BUILD_GRPCTEST OFF CACHE BOOL "" FORCE)
+set(FLATBUFFERS_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(flatbuffers
+  URL https://github.com/google/flatbuffers/archive/refs/tags/v25.12.19.tar.gz
+  URL_HASH SHA256=f81c3162b1046fe8b84b9a0dbdd383e24fdbcf88583b9cb6028f90d04d90696a)
+FetchContent_MakeAvailable(flatbuffers)
+
+set(FRAUD_DAEMON_GENERATED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../api_gateway/src/generated")
 
 add_library(fraud_daemon_core
   src/memory_pool.cpp
   src/batcher.cpp
   src/shared_memory.cpp
+  src/transaction.cpp
   src/cuda_stubs.cpp)
-target_include_directories(fraud_daemon_core PUBLIC include)
+target_include_directories(fraud_daemon_core PUBLIC include PRIVATE "${FRAUD_DAEMON_GENERATED_DIR}")
 target_compile_features(fraud_daemon_core PUBLIC cxx_std_20)
+target_link_libraries(fraud_daemon_core PRIVATE FlatBuffers::FlatBuffers)
 target_compile_definitions(fraud_daemon_core PRIVATE $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
 if(MSVC)
   target_compile_options(fraud_daemon_core PRIVATE /W4 /permissive-)
@@ -56,7 +74,8 @@ endif()
 
 if(BUILD_TESTING)
   add_executable(fraud_daemon_tests tests/daemon_tests.cpp)
-  target_link_libraries(fraud_daemon_tests PRIVATE fraud_daemon_core)
+  target_include_directories(fraud_daemon_tests PRIVATE "${FRAUD_DAEMON_GENERATED_DIR}")
+  target_link_libraries(fraud_daemon_tests PRIVATE fraud_daemon_core FlatBuffers::FlatBuffers)
   target_compile_features(fraud_daemon_tests PRIVATE cxx_std_20)
   add_test(NAME fraud_daemon_tests COMMAND fraud_daemon_tests)
 endif()

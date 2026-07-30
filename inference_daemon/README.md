@@ -16,7 +16,9 @@ ctest --test-dir build/daemon -C Release --output-on-failure
 
 The unit tests exercise ABI offsets, a bounded multi-producer/multi-consumer
 lock-free ring, deadline and full-batch triggers, dynamic batch sizes, and a
-global-allocation-counter assertion around `poll_once()`.
+global-allocation-counter assertion around `poll_once()`. Configuration fetches
+the pinned FlatBuffers 25.12.19 header source with a required SHA-256 hash so the
+checked-in generated C++ binding cannot silently compile against another ABI.
 
 ## Linux daemon
 
@@ -30,6 +32,14 @@ at ABI offset 256). A producer owns a completed response at sequence `p + 2`
 until it reads it and calls `release`, which stores `p + capacity`; capacity is
 therefore required to be a power of two and at least four. Windows supports the CPU library/tests but intentionally
 reports System V IPC as unavailable.
+
+Before scoring, the daemon bounds-checks the slot-relative payload range and
+uses the generated C++ binding to verify the `FRTX` identifier, all table
+offsets, required strings, and agreement between the slot and FlatBuffer request
+IDs. Fields are exposed as borrowed `string_view` values over the shared slot;
+no request object or serialized copy is allocated in the scheduler. Malformed
+buffers and producer cancellation records complete with status 422, preserving
+ring progress without invoking inference.
 
 ## Optional CUDA / CUTLASS
 
