@@ -1,0 +1,38 @@
+groups:
+  - name: fraud-serving
+    rules:
+      - alert: FraudGatewayHighFallbackRate
+        expr: |
+          sum(rate(fraud_gateway_fallback_total[5m]))
+          /
+          clamp_min(sum(rate(fraud_gateway_requests_total[5m])), 1)
+          > 0.01
+        for: 5m
+        labels:
+          severity: page
+        annotations:
+          summary: More than 1% of fraud decisions use the degraded path
+      - alert: FraudGatewayP99LatencyBudgetExceeded
+        expr: |
+          histogram_quantile(0.99,
+            sum by (le) (rate(fraud_gateway_request_duration_seconds_bucket[5m])))
+          > 0.001
+        for: 10m
+        labels:
+          severity: page
+        annotations:
+          summary: Warm-path p99 exceeds the 1 ms objective
+      - alert: FraudWorkerUnavailable
+        expr: up{job="fraud-worker"} == 0
+        for: 30s
+        labels:
+          severity: page
+        annotations:
+          summary: An inference worker target is unavailable
+      - alert: FraudFeatureMaterializationLag
+        expr: fraud_stream_event_lag_seconds > 2
+        for: 2m
+        labels:
+          severity: ticket
+        annotations:
+          summary: Online features are more than two seconds behind the stream

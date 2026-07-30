@@ -1,0 +1,22 @@
+# syntax=docker/dockerfile:1.7
+FROM nvidia/cuda:12.8.1-devel-ubuntu24.04 AS build
+ARG DEBIAN_FRONTEND=noninteractive
+# This version-selected base keeps local builds understandable. A controlled
+# production promotion must replace the tag with an approved registry digest.
+# The development image is a validation surface, not a supported runtime image.
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      cmake ninja-build g++ ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY execution_engine/ ./execution_engine/
+COPY tests/unit/ ./tests/unit/
+RUN cmake -S execution_engine -B build -G Ninja \
+      -DFRAUD_ENGINE_ENABLE_CUDA=ON -DFRAUD_ENGINE_BUILD_TESTS=ON \
+    && cmake --build build --parallel \
+    && ctest --test-dir build --output-on-failure
+
+# This image is a build/test and profiler environment. The Go worker uses its
+# deterministic scorer until an execution-engine transport adapter is selected.
+FROM build AS development
+ENTRYPOINT ["ctest", "--test-dir", "/src/build", "--output-on-failure"]

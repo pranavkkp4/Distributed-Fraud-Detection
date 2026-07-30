@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fraud-stream-processor
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: fraud-stream-processor}
+  template:
+    metadata:
+      labels: {app: fraud-stream-processor}
+    spec:
+      containers:
+        - name: stream-processor
+          image: fraud-inference/stream-processor:dev
+          imagePullPolicy: Never
+          envFrom:
+            - configMapRef: {name: fraud-config}
+          env:
+            - {name: STREAM_PROCESSOR_HTTP_ADDR, value: ":8082"}
+          ports:
+            - {name: http, containerPort: 8082}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 3
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: "1", memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fraud-stream-processor
+spec:
+  selector: {app: fraud-stream-processor}
+  ports:
+    - {name: http, port: 8082, targetPort: http}

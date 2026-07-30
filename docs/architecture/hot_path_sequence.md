@@ -1,4 +1,9 @@
-# Hot-path sequence and latency budget
+# Target hot-path sequence and latency budget
+
+This sequence is the production destination. The executable Go worker currently
+uses a deterministic CPU scorer, while CUDA Graph replay and the exported-model
+adapter remain explicit milestones in
+[`implementation_status.md`](implementation_status.md).
 
 ```mermaid
 sequenceDiagram
@@ -8,24 +13,24 @@ sequenceDiagram
     participant F as Feature store
     participant S as Scheduler
     participant W as Inference worker
-    participant R as Rules fallback
+    participant R as Fail-closed policy
 
     C->>G: POST /v1/score (deadline, request ID)
     G->>G: Authenticate + validate fixed bounds
     par Materialize context
       G->>F: One fixed-width GET
-      F-->>G: Versioned feature vector
+      F-->>G: Fixed-width feature vector
     end
     G->>S: Enqueue(request, absolute deadline)
     S->>S: Batch until size cap or queue-delay cap
     S->>W: Score compact batch
-    W->>W: Pack pinned buffer + replay graph
+    W->>W: Target adapter: pack pinned buffer + replay graph
     W-->>S: Score, explanation, model version
     S-->>G: Result
     alt all primary deadlines met
       G-->>C: Primary decision
     else store or worker unavailable
-      G->>R: Evaluate bounded deterministic policy
+      G->>R: Apply bounded deterministic deny policy
       R-->>G: Degraded decision + reason
       G-->>C: Fallback decision
     end
@@ -33,9 +38,10 @@ sequenceDiagram
 
 ## Default target budget
 
-The numbers below are configuration targets for a co-located, warmed deployment;
-they are not benchmark claims. Tests verify deadline behavior, while the profiling
-harness records observed values.
+The numbers below are a prospective SLO budget for a co-located, warmed
+deployment; they are not the relaxed local defaults and are not benchmark claims.
+Tests verify deadline behavior, while the profiling protocol defines how observed
+values must be recorded.
 
 | Phase | p95 target | Enforcement |
 | --- | ---: | --- |
@@ -47,7 +53,8 @@ harness records observed values.
 | Contingency | 200 us | absorbs jitter; activates fallback at deadline |
 | Total | 1,000 us | absolute request deadline |
 
-Every metric is emitted separately so a fast kernel cannot hide a slow network or
-queue. Cold starts, cross-region calls, cache misses, and fallback responses are
-reported as distinct populations.
-
+Production profiling must measure each phase separately so a fast kernel cannot
+hide a slow network or queue. The baseline exports total request, scheduler, and
+worker histograms; per-phase feature/dispatch histograms remain instrumentation
+work. Cold starts, cross-region calls, cache misses, and fallback responses must
+be reported as distinct populations.

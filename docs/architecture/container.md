@@ -1,4 +1,8 @@
-# Container architecture
+# Target container architecture
+
+This diagram shows the intended production decomposition. Local commands use a
+deterministic 32-feature CPU scorer unless a native model adapter is configured;
+see [`implementation_status.md`](implementation_status.md) for that distinction.
 
 ```mermaid
 flowchart TB
@@ -9,9 +13,9 @@ flowchart TB
     end
 
     subgraph serving[Serving and memory plane]
-      gateway[HTTP gateway] --> scheduler[Deadline-aware batch scheduler]
-      scheduler --> feature[Single-shot feature reader]
+      gateway[HTTP gateway] --> feature[Single-shot feature reader]
       feature --> redis
+      feature --> scheduler[Deadline-aware batch scheduler]
       scheduler --> pool[Worker pool / circuit breaker]
       pool --> workerA[Inference worker A]
       pool --> workerB[Inference worker B]
@@ -50,4 +54,3 @@ flowchart TB
 | Serving | authentication, deadlines, batching, routing, fallback | calculate historical windows on request |
 | Streaming | ordering, deduplication, windows, materialization | synchronously block an authorization |
 | Infrastructure | placement, rollout, telemetry, secret references | embed credentials in images or manifests |
-

@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fraud-worker
+spec:
+  replicas: 2
+  strategy:
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels: {app: fraud-worker}
+  template:
+    metadata:
+      labels: {app: fraud-worker}
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: worker
+          image: fraud-inference/worker:dev
+          imagePullPolicy: Never
+          env:
+            - {name: FRAUD_WORKER_ADDR, value: ":50051"}
+            - {name: FRAUD_WORKER_HTTP_ADDR, value: ":9091"}
+          envFrom:
+            - configMapRef: {name: fraud-config}
+            - secretRef: {name: fraud-auth}
+          ports:
+            - {name: grpc, containerPort: 50051}
+            - {name: metrics, containerPort: 9091}
+          readinessProbe:
+            grpc: {port: 50051}
+            periodSeconds: 2
+          livenessProbe:
+            grpc: {port: 50051}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: "2", memory: 512Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fraud-worker
+spec:
+  selector: {app: fraud-worker}
+  ports:
+    - {name: grpc, port: 50051, targetPort: grpc}
+    - {name: metrics, port: 9091, targetPort: metrics}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fraud-worker
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: fraud-worker}

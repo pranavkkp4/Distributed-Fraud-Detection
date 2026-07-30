@@ -1,7 +1,7 @@
 # Core offline model preparation dependency.
-torch>=2.6
+torch==2.10.0
 # Optional: required only for ONNX model emission/validation.
-onnx>=1.14
-onnxscript>=0.5
+onnx==1.22.0
+onnxscript==0.7.1
 # Execute the exported graph in CI so ABI checks also include numeric parity.
-onnxruntime>=1.20
+onnxruntime==1.28.0

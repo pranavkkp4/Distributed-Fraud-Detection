@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: fraud-inference
+resources:
+  - namespace.yaml
+  - config.yaml
+  - redis.yaml
+  - redpanda.yaml
+  - worker.yaml
+  - gateway.yaml
+  - stream-processor.yaml
+  - network-policy.yaml

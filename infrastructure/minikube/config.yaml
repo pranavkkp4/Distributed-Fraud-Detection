@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fraud-config
+data:
+  REDIS_ADDR: redis:6379
+  REDIS_TIMEOUT: 10ms
+  FRAUD_WORKER_ADDRS: fraud-worker:50051
+  KAFKA_BROKERS: redpanda:9092
+  KAFKA_TOPIC: transactions
+  KAFKA_GROUP_ID: fraud-feature-materializer
+  KAFKA_MAX_ATTEMPTS: "3"
+  KAFKA_RETRY_BACKOFF: 50ms
+  KAFKA_POISON_POLICY: halt
+  # Set a distinct topic only when KAFKA_POISON_POLICY is changed to dlq.
+  KAFKA_DLQ_TOPIC: ""
+  STREAM_WINDOW: 5m
+  STREAM_MAX_ENTITIES: "100000"
+  STREAM_MAX_EVENTS: "1000000"
+  FRAUD_TIMEOUT: 40ms
+  FRAUD_FEATURE_TIMEOUT: 10ms
+  FRAUD_QUEUE_DELAY: 2ms
+  FRAUD_INFERENCE_TIMEOUT: 20ms
+  # This sample cluster is intentionally local-only. Production must use the
+  # TLS/mTLS environment variables and omit this setting.
+  FRAUD_DEVELOPMENT_INSECURE: "true"
+---
+# Development-only value. Replace this object through a secret manager in any
+# shared cluster; never commit a production credential.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fraud-auth
+type: Opaque
+stringData:
+  FRAUD_AUTH_TOKEN: local-development-token
+  FRAUD_WORKER_AUTH_TOKEN: local-worker-token

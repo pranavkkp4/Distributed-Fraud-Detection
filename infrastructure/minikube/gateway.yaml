@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fraud-gateway
+spec:
+  replicas: 2
+  strategy:
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
+  selector:
+    matchLabels: {app: fraud-gateway}
+  template:
+    metadata:
+      labels: {app: fraud-gateway}
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: gateway
+          image: fraud-inference/gateway:dev
+          imagePullPolicy: Never
+          envFrom:
+            - configMapRef: {name: fraud-config}
+            - secretRef: {name: fraud-auth}
+          env:
+            - {name: FRAUD_GATEWAY_ADDR, value: ":8080"}
+          ports:
+            - {name: http, containerPort: 8080}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 2
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 100m, memory: 64Mi}
+            limits: {cpu: "1", memory: 256Mi}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fraud-gateway
+spec:
+  type: NodePort
+  selector: {app: fraud-gateway}
+  ports:
+    - {name: http, port: 8080, targetPort: http}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fraud-gateway
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: fraud-gateway}

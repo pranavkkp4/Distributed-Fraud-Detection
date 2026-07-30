@@ -14,14 +14,18 @@ flowchart LR
     events[(Financial event stream)]
 
     client -->|score transaction| engine
-    engine -->|decision + calibrated score| client
+    engine -->|decision + score + confidence| client
     events -->|ordered events by entity| engine
     analyst -->|policy and threshold changes| engine
     registry -->|versioned model bundle| engine
     engine -->|decision/audit event| events
 ```
 
-## Scope and guarantees
+## Target production guarantees
+
+These are the contracts the production deployment is designed to enforce. The
+reference implementation's exact coverage and known gaps are tracked in
+[`implementation_status.md`](implementation_status.md).
 
 - Ordering is guaranteed per chosen entity key, not globally.
 - The synchronous path performs one fixed-width feature lookup and one worker
@@ -36,4 +40,3 @@ flowchart LR
 The project does not promise universal sub-millisecond latency. It supplies the
 instrumentation and benchmark protocol needed to demonstrate that property on a
 named hardware, network, data, and load configuration.
-

@@ -1,0 +1,200 @@
+name: Continuous integration
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  training:
+    name: Python training and ONNX export
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: training/requirements.txt
+      - name: Install pinned training dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r training/requirements.txt
+      - name: Exercise training contracts and ONNX bundle export
+        run: python -m unittest tests/training/test_training_plane.py -v
+
+  go:
+    name: Go race tests (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - serving_plane
+          - stream_processor
+          - tests/integration
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: |
+            serving_plane/go.sum
+            stream_processor/go.sum
+            tests/integration/go.sum
+      - name: Verify module dependencies
+        working-directory: ${{ matrix.module }}
+        run: go mod download
+      - name: Run tests with the race detector
+        working-directory: ${{ matrix.module }}
+        run: go test -race ./...
+
+  native-and-config:
+    name: CPU execution engine and configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: training/requirements.txt
+      - name: Install configuration parser dependency
+        run: python -m pip install --upgrade pip 'PyYAML==6.0.3'
+      - name: Configure CPU-only execution engine
+        run: cmake -S execution_engine -B build/execution-cpu -DFRAUD_ENGINE_ENABLE_CUDA=OFF -DFRAUD_ENGINE_BUILD_TESTS=ON
+      - name: Build CPU-only execution engine
+        run: cmake --build build/execution-cpu --parallel
+      - name: Run CTest
+        run: ctest --test-dir build/execution-cpu --output-on-failure
+      - name: Validate repository configuration
+        run: python scripts/validate_configs.py
+      - name: Validate Compose model and Makefile entry points
+        run: |
+          docker compose -f infrastructure/compose/docker-compose.yml config --quiet
+          make help
+
+  gateway-contracts:
+    name: Gateway, gRPC worker, smoke harness, and Karate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 1s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: |
+            serving_plane/go.sum
+            stream_processor/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - name: Start worker and gateway, then run external contracts
+        shell: bash
+        env:
+          FRAUD_WORKER_ADDR: 127.0.0.1:50051
+          FRAUD_WORKER_AUTH_TOKEN: ci-worker-token
+          FRAUD_GATEWAY_ADDR: 127.0.0.1:8080
+          FRAUD_AUTH_TOKEN: ci-gateway-token
+          FRAUD_DEVELOPMENT_INSECURE: "true"
+          DFD_AUTH_TOKEN: ci-gateway-token
+          REDIS_ADDR: 127.0.0.1:6379
+          REDIS_TIMEOUT: 100ms
+          STREAM_PROCESSOR_HTTP_ADDR: 127.0.0.1:0
+        run: |
+          set -Eeuo pipefail
+          worker_log="$RUNNER_TEMP/fraud-worker.log"
+          gateway_log="$RUNNER_TEMP/fraud-gateway.log"
+          worker_bin="$RUNNER_TEMP/fraud-worker"
+          gateway_bin="$RUNNER_TEMP/fraud-gateway"
+          stream_bin="$RUNNER_TEMP/fraud-stream-processor"
+          worker_pid=''
+          gateway_pid=''
+          cleanup() {
+            status=$?
+            for pid in "$gateway_pid" "$worker_pid"; do
+              if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+                kill "$pid" 2>/dev/null || true
+                wait "$pid" 2>/dev/null || true
+              fi
+            done
+            if [[ $status -ne 0 ]]; then
+              echo '--- worker log ---'
+              cat "$worker_log" || true
+              echo '--- gateway log ---'
+              cat "$gateway_log" || true
+            fi
+            exit "$status"
+          }
+          trap cleanup EXIT
+
+          (
+            cd serving_plane
+            go build -o "$worker_bin" ./cmd/worker
+            go build -o "$gateway_bin" ./cmd/gateway
+          )
+          (
+            cd stream_processor
+            go build -o "$stream_bin" ./cmd/stream-processor
+          )
+          printf '%s\n' '[{"id":"ci-event-1","entity_id":"ci-materialized-account","amount":42,"occurred_at":"2026-01-01T00:00:00Z","partition":0,"offset":1}]' | "$stream_bin"
+          "$worker_bin" >"$worker_log" 2>&1 &
+          worker_pid=$!
+          worker_ready=false
+          for attempt in {1..30}; do
+            if (echo > /dev/tcp/127.0.0.1/50051) 2>/dev/null; then
+              worker_ready=true
+              break
+            fi
+            if ! kill -0 "$worker_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$worker_ready" != true ]]; then
+            echo 'Worker did not become ready within 30 seconds.' >&2
+            exit 1
+          fi
+          "$gateway_bin" >"$gateway_log" 2>&1 &
+          gateway_pid=$!
+
+          ready=false
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1:8080/readyz >/dev/null; then
+              ready=true
+              break
+            fi
+            if ! kill -0 "$worker_pid" 2>/dev/null || ! kill -0 "$gateway_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$ready" != true ]]; then
+            echo 'Gateway did not become ready within 30 seconds.' >&2
+            exit 1
+          fi
+
+          python tests/integration/smoke_load.py --url http://127.0.0.1:8080 --requests 12 --concurrency 4
+          mvn -B -ntp -f tests/api/pom.xml test -DbaseUrl=http://127.0.0.1:8080 -DauthToken=ci-gateway-token -DmaterializedEntity=ci-materialized-account

@@ -3,6 +3,7 @@ build/
 build-*/
 out/
 dist/
+target/
 *.obj
 *.o
 *.a

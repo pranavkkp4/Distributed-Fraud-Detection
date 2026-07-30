@@ -1,0 +1,139 @@
+name: fraud-inference-engine
+
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--latency-monitor-threshold", "1"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 1s
+      retries: 20
+    networks: [fraud]
+
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.2.15
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=768M
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --kafka-addr=internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr=internal://redpanda:9092,external://localhost:19092
+    ports:
+      - "127.0.0.1:19092:19092"
+      - "127.0.0.1:9644:9644"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy:.*true'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [fraud]
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile.worker
+    environment:
+      FRAUD_WORKER_ADDR: :50051
+      FRAUD_WORKER_HTTP_ADDR: :9091
+      FRAUD_WORKER_AUTH_TOKEN: ${FRAUD_WORKER_AUTH_TOKEN:-local-worker-token}
+      FRAUD_DEVELOPMENT_INSECURE: "true"
+    expose: ["50051", "9091"]
+    healthcheck:
+      test: ["CMD", "/fraud-worker", "-healthcheck"]
+      interval: 3s
+      timeout: 1s
+      retries: 20
+    networks: [fraud]
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile.gateway
+    environment:
+      FRAUD_GATEWAY_ADDR: :8080
+      FRAUD_AUTH_TOKEN: ${FRAUD_AUTH_TOKEN:-local-development-token}
+      FRAUD_WORKER_ADDRS: worker:50051
+      FRAUD_WORKER_AUTH_TOKEN: ${FRAUD_WORKER_AUTH_TOKEN:-local-worker-token}
+      FRAUD_DEVELOPMENT_INSECURE: "true"
+      REDIS_ADDR: redis:6379
+      REDIS_TIMEOUT: ${REDIS_TIMEOUT:-10ms}
+      FRAUD_TIMEOUT: ${FRAUD_TIMEOUT:-40ms}
+      FRAUD_FEATURE_TIMEOUT: ${FRAUD_FEATURE_TIMEOUT:-10ms}
+      FRAUD_QUEUE_DELAY: ${FRAUD_QUEUE_DELAY:-2ms}
+      FRAUD_INFERENCE_TIMEOUT: ${FRAUD_INFERENCE_TIMEOUT:-20ms}
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/fraud-gateway", "-healthcheck"]
+      interval: 3s
+      timeout: 1s
+      retries: 20
+    networks: [fraud]
+
+  stream-processor:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile.stream-processor
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+      KAFKA_TOPIC: transactions
+      KAFKA_GROUP_ID: fraud-feature-materializer
+      KAFKA_MAX_ATTEMPTS: ${KAFKA_MAX_ATTEMPTS:-3}
+      KAFKA_RETRY_BACKOFF: ${KAFKA_RETRY_BACKOFF:-50ms}
+      KAFKA_POISON_POLICY: ${KAFKA_POISON_POLICY:-halt}
+      KAFKA_DLQ_TOPIC: ${KAFKA_DLQ_TOPIC:-}
+      FRAUD_DEVELOPMENT_INSECURE: "true"
+      REDIS_ADDR: redis:6379
+      REDIS_TIMEOUT: ${REDIS_TIMEOUT:-10ms}
+      STREAM_WINDOW: ${STREAM_WINDOW:-5m}
+      STREAM_MAX_ENTITIES: ${STREAM_MAX_ENTITIES:-100000}
+      STREAM_MAX_EVENTS: ${STREAM_MAX_EVENTS:-1000000}
+      STREAM_PROCESSOR_HTTP_ADDR: :8082
+    depends_on:
+      redis:
+        condition: service_healthy
+      redpanda:
+        condition: service_healthy
+    expose: ["8082"]
+    networks: [fraud]
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=24h"]
+    volumes:
+      - ../monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "127.0.0.1:9093:9090"
+    depends_on: [gateway]
+    networks: [fraud]
+
+  grafana:
+    image: grafana/grafana:11.2.2
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-fraud-local-only}
+    volumes:
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on: [prometheus]
+    networks: [fraud]
+
+networks:
+  fraud: {}
