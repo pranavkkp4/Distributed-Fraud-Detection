@@ -17,6 +17,7 @@ esac
 
 mkdir -p "$destination"
 curl --fail --location --silent --show-error --proto '=https' --tlsv1.2 \
+  --connect-timeout 20 --retry 5 --retry-delay 2 --retry-all-errors \
   --output "$archive" "$FLATC_URL"
 printf '%s  %s\n' "$FLATC_SHA256" "$archive" | sha256sum --check --status
 unzip -q -o "$archive" -d "$destination"
