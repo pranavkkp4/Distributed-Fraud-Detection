@@ -1,0 +1,104 @@
+name: Profile Linux shared-memory path
+
+on:
+  workflow_dispatch:
+    inputs:
+      requests:
+        description: Number of seeded Poisson transaction arrivals
+        required: true
+        default: '5000'
+        type: string
+      rate:
+        description: Mean Poisson arrivals per second
+        required: true
+        default: '1500'
+        type: string
+      concurrency:
+        description: Maximum HTTP workers and connections
+        required: true
+        default: '64'
+        type: string
+      seed:
+        description: Deterministic Poisson and transaction seed
+        required: true
+        default: '20260730'
+        type: string
+      profile_seconds:
+        description: Perf sampling duration
+        required: true
+        default: '10'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: profile-linux-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  profile:
+    name: Measured System V IPC profile
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      RUSTUP_TOOLCHAIN: '1.81.0'
+      FRAUD_REQUIRE_FLATC: '1'
+      PROFILE_REQUESTS: ${{ inputs.requests }}
+      PROFILE_RATE: ${{ inputs.rate }}
+      PROFILE_CONCURRENCY: ${{ inputs.concurrency }}
+      PROFILE_SEED: ${{ inputs.seed }}
+      PROFILE_SECONDS: ${{ inputs.profile_seconds }}
+      PROFILE_ARTIFACT_DIR: ${{ github.workspace }}/profile-artifacts
+      FLAMEGRAPH_COMMIT: 41fee1f99f9276008b7cd112fca19dc3ea84ac32
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: load_tester/go.sum
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.81.0 --profile minimal
+      - name: Install perf and checksum-verified flatc
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes linux-tools-common linux-tools-generic
+          flatc_path="$(bash scripts/install_flatc_linux.sh "$RUNNER_TEMP/flatc-25.12.19")"
+          echo "$(dirname "$flatc_path")" >> "$GITHUB_PATH"
+      - name: Fetch pinned FlameGraph renderer
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git clone --filter=blob:none https://github.com/brendangregg/FlameGraph.git "$RUNNER_TEMP/FlameGraph"
+          git -C "$RUNNER_TEMP/FlameGraph" checkout --detach "$FLAMEGRAPH_COMMIT"
+          test "$(git -C "$RUNNER_TEMP/FlameGraph" rev-parse HEAD)" = "$FLAMEGRAPH_COMMIT"
+          echo "FLAMEGRAPH_DIR=$RUNNER_TEMP/FlameGraph" >> "$GITHUB_ENV"
+      - name: Build frame-pointer daemon, Rust gateway, and Go load tester
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cmake -S inference_daemon -B build/profile/inference-daemon \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_CXX_FLAGS_RELWITHDEBINFO='-O2 -g -DNDEBUG -fno-omit-frame-pointer' \
+            -DFRAUD_DAEMON_ENABLE_CUDA=OFF -DBUILD_TESTING=OFF
+          cmake --build build/profile/inference-daemon --parallel
+          cargo build --manifest-path api_gateway/Cargo.toml --release --locked
+          mkdir -p build/profile
+          (cd load_tester && go build -trimpath -o ../build/profile/fraud-load-tester .)
+      - name: Run seeded open-loop workload and capture stacks
+        shell: bash
+        env:
+          FRAUD_DAEMON_BIN: ${{ github.workspace }}/build/profile/inference-daemon/fraud_inference_daemon
+          FRAUD_GATEWAY_BIN: ${{ github.workspace }}/api_gateway/target/release/fraud-shm-api-gateway
+          FRAUD_LOAD_BIN: ${{ github.workspace }}/build/profile/fraud-load-tester
+        run: bash scripts/profile_shm_linux.sh
+      - name: Upload measurements and profiler diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: linux-shm-profile-${{ github.run_id }}
+          path: profile-artifacts/
+          if-no-files-found: error
+          retention-days: 30
