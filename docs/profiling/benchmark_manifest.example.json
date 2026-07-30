@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "commit": "REPLACE_WITH_GIT_SHA",
+  "recorded_at": "2026-01-01T00:00:00Z",
+  "hardware": {
+    "cpu": "REPLACE",
+    "gpu": "REPLACE",
+    "gpu_count": 1,
+    "network": "loopback-or-link-description"
+  },
+  "software": {
+    "os": "REPLACE",
+    "cuda": "REPLACE",
+    "driver": "REPLACE",
+    "compiler": "REPLACE"
+  },
+  "model": {
+    "bundle_sha256": "REPLACE",
+    "sequence_length": 32,
+    "feature_width": 32,
+    "numeric_backend": "fp16"
+  },
+  "load": {
+    "duration_seconds": 60,
+    "warmup_seconds": 10,
+    "requests_per_second": 10000,
+    "arrival_distribution": "poisson",
+    "queue_delay_microseconds": 100
+  },
+  "results": {
+    "latency_microseconds": {"p50": null, "p95": null, "p99": null, "p999": null, "max": null},
+    "throughput_per_second": null,
+    "error_rate": null,
+    "fallback_rate": null
+  },
+  "artifacts": []
+}
+
