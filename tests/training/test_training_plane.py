@@ -135,17 +135,17 @@ class TrainingPlaneTests(unittest.TestCase):
 
     def test_onnx_dependency_failure_is_clean(self) -> None:
         """An unavailable ONNX dependency must not leave a partial bundle."""
-        import importlib.util
-
-        if importlib.util.find_spec("onnx") is not None:
-            self.skipTest("ONNX is installed; the success-path test covers export")
         from training.export import export_model_bundle
         from training.model import FixedShapeTransactionTransformer
 
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "bundle"
-            with self.assertRaisesRegex(RuntimeError, "optional 'onnx' package"):
-                export_model_bundle(FixedShapeTransactionTransformer(self.config), output)
+            with patch(
+                "training.export.export_model.importlib.util.find_spec",
+                side_effect=lambda package: None if package == "onnxscript" else object(),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "'onnxscript'"):
+                    export_model_bundle(FixedShapeTransactionTransformer(self.config), output)
             self.assertFalse(output.exists())
 
     def test_export_failure_recursively_removes_partial_bundle(self) -> None:
@@ -168,7 +168,13 @@ class TrainingPlaneTests(unittest.TestCase):
                     export_model_bundle(FixedShapeTransactionTransformer(self.config), output)
             self.assertFalse(output.exists())
 
-    @unittest.skipUnless(__import__("importlib").util.find_spec("onnx"), "onnx is not installed")
+    @unittest.skipUnless(
+        all(
+            __import__("importlib").util.find_spec(package)
+            for package in ("onnx", "onnxscript")
+        ),
+        "ONNX export packages are not installed",
+    )
     def test_onnx_bundle_export(self) -> None:
         from training.export import export_model_bundle
         from training.model import FixedShapeTransactionTransformer
@@ -179,6 +185,10 @@ class TrainingPlaneTests(unittest.TestCase):
             self.assertTrue((output / "model.onnx").is_file())
             self.assertTrue((output / "model.pt").is_file())
             self.assertTrue((output / "metadata.json").is_file())
+            self.assertEqual(
+                {"metadata.json", "model.onnx", "model.pt"},
+                {artifact.name for artifact in output.iterdir()},
+            )
             metadata = json.loads((output / "metadata.json").read_text(encoding="utf-8"))
             from training.bundle import sha256_file
 

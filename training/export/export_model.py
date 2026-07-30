@@ -47,7 +47,7 @@ def export_model_bundle(
     model_name: str = "fixed-shape-fraud-transformer",
     model_version: str = "0.1.0",
     calibration: FP8CalibrationResult | None = None,
-    opset_version: int = 17,
+    opset_version: int = 18,
 ) -> Path:
     """Publish a fixed-shape ONNX checkpoint plus immutable metadata.
 
@@ -57,9 +57,16 @@ def export_model_bundle(
     destination = Path(output_dir)
     if destination.exists():
         raise FileExistsError(f"refusing to replace existing bundle: {destination}")
-    if importlib.util.find_spec("onnx") is None:
+    missing_export_packages = [
+        package
+        for package in ("onnx", "onnxscript")
+        if importlib.util.find_spec(package) is None
+    ]
+    if missing_export_packages:
         raise RuntimeError(
-            "ONNX export requires the optional 'onnx' package; install training/requirements.txt"
+            "ONNX export requires the optional export packages "
+            f"{', '.join(repr(package) for package in missing_export_packages)}; "
+            "install training/requirements.txt"
         )
     destination.mkdir(parents=True)
     try:
@@ -67,15 +74,18 @@ def export_model_bundle(
         config = model.config
         sample = make_synthetic_transactions(config, batch_size=1).features
         torch.save(model.state_dict(), destination / "model.pt")
+        adapter = _OnnxOutputAdapter(model).eval()
         torch.onnx.export(
-            _OnnxOutputAdapter(model),
+            adapter,
             sample,
             destination / "model.onnx",
             input_names=["transaction_history"],
             output_names=["fraud_probability", "calibrated_confidence", "explanation"],
             dynamic_axes=None,
             opset_version=opset_version,
-            do_constant_folding=True,
+            dynamo=True,
+            external_data=False,
+            verbose=False,
         )
         artifact_sha256 = {
             "model.onnx": sha256_file(destination / "model.onnx"),

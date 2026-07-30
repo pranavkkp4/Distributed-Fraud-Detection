@@ -1,4 +1,5 @@
 # Core offline model preparation dependency.
-torch>=2.1
+torch>=2.6
 # Optional: required only for ONNX model emission/validation.
 onnx>=1.14
+onnxscript>=0.5
