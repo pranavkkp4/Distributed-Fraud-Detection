@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
@@ -57,9 +58,7 @@ func (s *operationalState) handler() http.Handler {
 		_, _ = w.Write([]byte(
 			"fraud_stream_attempts_total " + strconv.FormatUint(s.attempts.Load(), 10) + "\n" +
 				"fraud_stream_processed_total " + strconv.FormatUint(s.events.Load(), 10) + "\n" +
-				"fraud_stream_errors_total " + strconv.FormatUint(s.failures.Load(), 10) + "\n" +
 				"fraud_stream_event_lag_seconds " + strconv.FormatFloat(math.Float64frombits(s.eventLagBits.Load()), 'g', -1, 64) + "\n" +
-				"fraud_stream_events_total " + strconv.FormatUint(s.events.Load(), 10) + "\n" +
 				"fraud_stream_materialized_total " + strconv.FormatUint(s.materialized.Load(), 10) + "\n" +
 				"fraud_stream_failures_total " + strconv.FormatUint(s.failures.Load(), 10) + "\n",
 		))
@@ -70,15 +69,16 @@ func (s *operationalState) handler() http.Handler {
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	developmentInsecure := envBool("FRAUD_DEVELOPMENT_INSECURE")
 
-	consumer, source, err := configuredConsumer()
+	consumer, source, err := configuredConsumer(developmentInsecure)
 	if err != nil {
 		slog.Error("consumer configuration failed", "error", err)
 		os.Exit(1)
 	}
 	defer consumer.Close()
 
-	sink, probe, closeSink, err := configuredMaterializer(source == "kafka")
+	sink, probe, closeSink, err := configuredMaterializer(source == "kafka", developmentInsecure)
 	if err != nil {
 		slog.Error("materializer configuration failed", "error", err)
 		os.Exit(1)
@@ -102,12 +102,22 @@ func main() {
 		os.Exit(1)
 	}
 	state.ready.Store(true)
-	httpAddr := envOr("STREAM_PROCESSOR_HTTP_ADDR", ":9092")
-	httpServer := &http.Server{Addr: httpAddr, Handler: state.handler(), ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+	httpAddr := envOr("STREAM_PROCESSOR_HTTP_ADDR", ":8082")
+	httpServer, httpCert, httpKey, err := configuredHTTPServer(httpAddr, state.handler(), developmentInsecure)
+	if err != nil {
+		slog.Error("operational HTTP configuration failed", "error", err)
+		os.Exit(1)
+	}
 	httpErr := make(chan error, 1)
 	go func() {
 		slog.Info("stream processor operational HTTP listening", "addr", httpAddr)
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		var err error
+		if developmentInsecure {
+			err = httpServer.ListenAndServe()
+		} else {
+			err = httpServer.ListenAndServeTLS(httpCert, httpKey)
+		}
+		if err != nil && err != http.ErrServerClosed {
 			httpErr <- err
 		}
 	}()
@@ -164,21 +174,36 @@ func main() {
 	}
 }
 
-func configuredConsumer() (ingestion.Consumer, string, error) {
+func configuredHTTPServer(address string, handler http.Handler, developmentInsecure bool) (*http.Server, string, string, error) {
+	certFile := strings.TrimSpace(os.Getenv("STREAM_PROCESSOR_TLS_CERT_FILE"))
+	keyFile := strings.TrimSpace(os.Getenv("STREAM_PROCESSOR_TLS_KEY_FILE"))
+	if !developmentInsecure && (certFile == "" || keyFile == "") {
+		return nil, "", "", errors.New("STREAM_PROCESSOR_TLS_CERT_FILE and STREAM_PROCESSOR_TLS_KEY_FILE are required unless FRAUD_DEVELOPMENT_INSECURE=true")
+	}
+	server := &http.Server{
+		Addr:              address,
+		Handler:           handler,
+		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS13},
+		ReadHeaderTimeout: 2 * time.Second,
+		ReadTimeout:       5 * time.Second,
+		WriteTimeout:      5 * time.Second,
+		IdleTimeout:       30 * time.Second,
+		MaxHeaderBytes:    16 << 10,
+	}
+	return server, certFile, keyFile, nil
+}
+
+func configuredConsumer(developmentInsecure bool) (ingestion.Consumer, string, error) {
 	if value := strings.TrimSpace(os.Getenv("KAFKA_BROKERS")); value != "" {
 		brokers := strings.Split(value, ",")
 		for i := range brokers {
 			brokers[i] = strings.TrimSpace(brokers[i])
 		}
-		consumer, err := ingestion.NewKafka(ingestion.KafkaConfig{
-			Brokers:      brokers,
-			Topic:        envOr("KAFKA_TOPIC", "financial-events"),
-			GroupID:      envOr("KAFKA_GROUP_ID", "fraud-feature-aggregator"),
-			MaxAttempts:  envPositiveInt("KAFKA_MAX_ATTEMPTS", 3),
-			RetryBackoff: envDuration("KAFKA_RETRY_BACKOFF", 50*time.Millisecond),
-			PoisonPolicy: envOr("KAFKA_POISON_POLICY", "halt"),
-			DLQTopic:     strings.TrimSpace(os.Getenv("KAFKA_DLQ_TOPIC")),
-		})
+		config, err := configuredKafka(brokers, developmentInsecure)
+		if err != nil {
+			return nil, "kafka", err
+		}
+		consumer, err := ingestion.NewKafka(config)
 		return consumer, "kafka", err
 	}
 
@@ -196,9 +221,39 @@ func configuredConsumer() (ingestion.Consumer, string, error) {
 	return ingestion.NewMemory(events), "stdin", nil
 }
 
-func configuredMaterializer(requireRemote bool) (aggregations.Materializer, func(context.Context) error, func() error, error) {
+func configuredKafka(brokers []string, developmentInsecure bool) (ingestion.KafkaConfig, error) {
+	saslUsername := strings.TrimSpace(os.Getenv("KAFKA_SASL_USERNAME"))
+	saslPassword := os.Getenv("KAFKA_SASL_PASSWORD")
+	clientCert := strings.TrimSpace(os.Getenv("KAFKA_TLS_CERT_FILE"))
+	clientKey := strings.TrimSpace(os.Getenv("KAFKA_TLS_KEY_FILE"))
+	if !developmentInsecure && !((saslUsername != "" && saslPassword != "") || (clientCert != "" && clientKey != "")) {
+		return ingestion.KafkaConfig{}, errors.New("production Kafka requires SCRAM credentials or a TLS client certificate")
+	}
+	return ingestion.KafkaConfig{
+		Brokers:             brokers,
+		Topic:               envOr("KAFKA_TOPIC", "financial-events"),
+		GroupID:             envOr("KAFKA_GROUP_ID", "fraud-feature-aggregator"),
+		MaxAttempts:         envPositiveInt("KAFKA_MAX_ATTEMPTS", 3),
+		RetryBackoff:        envDuration("KAFKA_RETRY_BACKOFF", 50*time.Millisecond),
+		PoisonPolicy:        envOr("KAFKA_POISON_POLICY", "halt"),
+		DevelopmentInsecure: developmentInsecure,
+		TLSCAFile:           strings.TrimSpace(os.Getenv("KAFKA_TLS_CA_FILE")),
+		TLSServerName:       strings.TrimSpace(os.Getenv("KAFKA_TLS_SERVER_NAME")),
+		TLSClientCertFile:   clientCert,
+		TLSClientKeyFile:    clientKey,
+		SASLUsername:        saslUsername,
+		SASLPassword:        saslPassword,
+		DLQTopic:            strings.TrimSpace(os.Getenv("KAFKA_DLQ_TOPIC")),
+	}, nil
+}
+
+func configuredMaterializer(requireRemote, developmentInsecure bool) (aggregations.Materializer, func(context.Context) error, func() error, error) {
 	if address := strings.TrimSpace(os.Getenv("REDIS_ADDR")); address != "" {
-		redis, err := aggregations.NewRedisMaterializer(address, envDuration("REDIS_TIMEOUT", 100*time.Millisecond))
+		config, err := configuredRedisMaterializer(address, developmentInsecure)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		redis, err := aggregations.NewRedisMaterializerWithConfig(config)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -208,6 +263,30 @@ func configuredMaterializer(requireRemote bool) (aggregations.Materializer, func
 		return nil, nil, nil, errors.New("REDIS_ADDR is required when Kafka ingestion is configured")
 	}
 	return aggregations.NewMemoryMaterializer(), nil, nil, nil
+}
+
+func configuredRedisMaterializer(address string, developmentInsecure bool) (aggregations.RedisConfig, error) {
+	username := strings.TrimSpace(os.Getenv("REDIS_USERNAME"))
+	password := os.Getenv("REDIS_PASSWORD")
+	certFile := strings.TrimSpace(os.Getenv("REDIS_TLS_CERT_FILE"))
+	keyFile := strings.TrimSpace(os.Getenv("REDIS_TLS_KEY_FILE"))
+	if username != "" && password == "" {
+		return aggregations.RedisConfig{}, errors.New("REDIS_USERNAME requires REDIS_PASSWORD")
+	}
+	if !developmentInsecure && password == "" && (certFile == "" || keyFile == "") {
+		return aggregations.RedisConfig{}, errors.New("production Redis requires REDIS_PASSWORD or a TLS client certificate")
+	}
+	return aggregations.RedisConfig{
+		Address:    address,
+		Timeout:    envDuration("REDIS_TIMEOUT", 100*time.Millisecond),
+		Username:   username,
+		Password:   password,
+		UseTLS:     !developmentInsecure,
+		CAFile:     strings.TrimSpace(os.Getenv("REDIS_TLS_CA_FILE")),
+		ServerName: strings.TrimSpace(os.Getenv("REDIS_TLS_SERVER_NAME")),
+		CertFile:   certFile,
+		KeyFile:    keyFile,
+	}, nil
 }
 
 func envOr(key, fallback string) string {
@@ -230,4 +309,9 @@ func envPositiveInt(key string, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+func envBool(key string) bool {
+	value, err := strconv.ParseBool(strings.TrimSpace(os.Getenv(key)))
+	return err == nil && value
 }

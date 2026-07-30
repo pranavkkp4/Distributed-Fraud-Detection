@@ -44,8 +44,12 @@ func main() {
 	var features featurestore.Store
 	var redisStore *featurestore.Redis
 	if address := strings.TrimSpace(os.Getenv("REDIS_ADDR")); address != "" {
-		var err error
-		redisStore, err = featurestore.NewRedis(address, worker.ModelFeatureWidth, duration("REDIS_TIMEOUT", 5*time.Millisecond))
+		storeConfig, configErr := configuredRedis(address, developmentInsecure)
+		if configErr != nil {
+			slog.Error("Redis feature store configuration", "error", configErr)
+			os.Exit(1)
+		}
+		redisStore, err = featurestore.NewRedisWithConfig(storeConfig)
 		if err != nil {
 			slog.Error("Redis feature store setup", "error", err)
 			os.Exit(1)
@@ -137,6 +141,31 @@ func main() {
 	if serveFailed {
 		os.Exit(1)
 	}
+}
+
+func configuredRedis(address string, developmentInsecure bool) (featurestore.RedisConfig, error) {
+	username := strings.TrimSpace(os.Getenv("REDIS_USERNAME"))
+	password := os.Getenv("REDIS_PASSWORD")
+	certFile := strings.TrimSpace(os.Getenv("REDIS_TLS_CERT_FILE"))
+	keyFile := strings.TrimSpace(os.Getenv("REDIS_TLS_KEY_FILE"))
+	if username != "" && password == "" {
+		return featurestore.RedisConfig{}, errors.New("REDIS_USERNAME requires REDIS_PASSWORD")
+	}
+	if !developmentInsecure && password == "" && (certFile == "" || keyFile == "") {
+		return featurestore.RedisConfig{}, errors.New("production Redis requires REDIS_PASSWORD or a TLS client certificate")
+	}
+	return featurestore.RedisConfig{
+		Address:    address,
+		Width:      worker.ModelFeatureWidth,
+		Timeout:    duration("REDIS_TIMEOUT", 5*time.Millisecond),
+		Username:   username,
+		Password:   password,
+		UseTLS:     !developmentInsecure,
+		CAFile:     strings.TrimSpace(os.Getenv("REDIS_TLS_CA_FILE")),
+		ServerName: strings.TrimSpace(os.Getenv("REDIS_TLS_SERVER_NAME")),
+		CertFile:   certFile,
+		KeyFile:    keyFile,
+	}, nil
 }
 
 func developmentFeatures() *featurestore.Memory {

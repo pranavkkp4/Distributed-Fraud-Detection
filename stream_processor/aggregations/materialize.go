@@ -2,8 +2,12 @@ package aggregations
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
+	"fmt"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,27 +54,88 @@ type RedisMaterializer struct {
 	timeout time.Duration
 }
 
+// RedisConfig configures authenticated Redis materialization. UseTLS enables
+// TLS 1.3 and system trust roots; CAFile selects a private trust root. A client
+// certificate/key pair enables mutual TLS where Redis requires it.
+type RedisConfig struct {
+	Address    string
+	Timeout    time.Duration
+	Username   string
+	Password   string
+	UseTLS     bool
+	CAFile     string
+	ServerName string
+	CertFile   string
+	KeyFile    string
+}
+
 const MaterializedFeatureWidth = 32
 
+// NewRedisMaterializer is a legacy local-development convenience constructor.
+// Production code should use NewRedisMaterializerWithConfig for explicit TLS
+// and authentication settings.
 func NewRedisMaterializer(address string, timeout time.Duration) (*RedisMaterializer, error) {
-	if address == "" {
+	return NewRedisMaterializerWithConfig(RedisConfig{Address: address, Timeout: timeout})
+}
+
+func NewRedisMaterializerWithConfig(config RedisConfig) (*RedisMaterializer, error) {
+	if config.Address == "" {
 		return nil, errors.New("Redis address is required")
 	}
-	if timeout <= 0 {
-		timeout = 100 * time.Millisecond
+	if config.Timeout <= 0 {
+		config.Timeout = 100 * time.Millisecond
+	}
+	tlsConfig, err := redisTLSConfig(config.UseTLS, config.CAFile, config.ServerName, config.CertFile, config.KeyFile)
+	if err != nil {
+		return nil, err
 	}
 	client := redis.NewClient(&redis.Options{
-		Addr:            address,
+		Addr:            config.Address,
+		Username:        config.Username,
+		Password:        config.Password,
+		TLSConfig:       tlsConfig,
 		Protocol:        2,
-		DialTimeout:     timeout,
-		ReadTimeout:     timeout,
-		WriteTimeout:    timeout,
+		DialTimeout:     config.Timeout,
+		ReadTimeout:     config.Timeout,
+		WriteTimeout:    config.Timeout,
 		PoolSize:        8,
 		MinIdleConns:    1,
 		MaxRetries:      -1,
 		DisableIdentity: true,
 	})
-	return &RedisMaterializer{client: client, timeout: timeout}, nil
+	return &RedisMaterializer{client: client, timeout: config.Timeout}, nil
+}
+
+func redisTLSConfig(useTLS bool, caFile, serverName, certFile, keyFile string) (*tls.Config, error) {
+	if (certFile == "") != (keyFile == "") {
+		return nil, errors.New("Redis TLS client certificate and key must be supplied together")
+	}
+	if !useTLS {
+		if caFile != "" || serverName != "" || certFile != "" {
+			return nil, errors.New("Redis TLS options require UseTLS=true")
+		}
+		return nil, nil
+	}
+	var roots *x509.CertPool
+	if caFile != "" {
+		roots = x509.NewCertPool()
+		pem, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("read Redis TLS CA: %w", err)
+		}
+		if !roots.AppendCertsFromPEM(pem) {
+			return nil, errors.New("Redis TLS CA contains no certificates")
+		}
+	}
+	config := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: serverName}
+	if certFile != "" {
+		certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load Redis TLS client certificate: %w", err)
+		}
+		config.Certificates = []tls.Certificate{certificate}
+	}
+	return config, nil
 }
 
 func (r *RedisMaterializer) Put(ctx context.Context, features Features) error {

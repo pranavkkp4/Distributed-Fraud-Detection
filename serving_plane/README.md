@@ -39,6 +39,10 @@ production it calls local HTTPS and verifies the certificate against platform ro
 `*_TLS_SERVER_NAME` when the certificate does not include `127.0.0.1`.
 
 Production startup rejects missing authentication tokens and plaintext gRPC.
+It also requires `REDIS_ADDR`; Redis uses TLS 1.3 plus either `REDIS_PASSWORD`
+(optionally `REDIS_USERNAME`) or the `REDIS_TLS_CERT_FILE` /
+`REDIS_TLS_KEY_FILE` client identity. Configure trust with
+`REDIS_TLS_CA_FILE` and optional `REDIS_TLS_SERVER_NAME`.
 Set worker certificate/key paths with `FRAUD_WORKER_TLS_CERT_FILE` and
 `FRAUD_WORKER_TLS_KEY_FILE`; gateways trust the worker CA through
 `FRAUD_WORKER_TLS_CA_FILE` and present their internal identity through

@@ -39,6 +39,31 @@ func TestProbeHTTPReadyUsesHTTPOnlyInDevelopment(t *testing.T) {
 	}
 }
 
+func TestConfiguredRedisRequiresProductionAuthenticationAndTLS(t *testing.T) {
+	for _, key := range []string{"REDIS_USERNAME", "REDIS_PASSWORD", "REDIS_TLS_CA_FILE", "REDIS_TLS_SERVER_NAME", "REDIS_TLS_CERT_FILE", "REDIS_TLS_KEY_FILE"} {
+		t.Setenv(key, "")
+	}
+	if _, err := configuredRedis("redis:6379", false); err == nil {
+		t.Fatal("production Redis accepted missing authentication")
+	}
+	t.Setenv("REDIS_USERNAME", "fraud")
+	t.Setenv("REDIS_PASSWORD", "secret")
+	config, err := configuredRedis("redis:6379", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !config.UseTLS || config.Username != "fraud" || config.Password != "secret" {
+		t.Fatalf("production Redis config = %#v", config)
+	}
+	config, err = configuredRedis("redis:6379", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.UseTLS {
+		t.Fatal("development-insecure Redis unexpectedly enabled TLS")
+	}
+}
+
 func writeProbeCA(t *testing.T, certificateDER []byte) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "probe-ca.pem")

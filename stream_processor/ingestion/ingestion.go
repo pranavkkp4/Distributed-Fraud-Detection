@@ -3,15 +3,20 @@ package ingestion
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go/sasl/scram"
 )
 
 type Event struct {
@@ -79,6 +84,19 @@ type KafkaConfig struct {
 	MaxAttempts  int
 	RetryBackoff time.Duration
 	PoisonPolicy string // "halt" (default) or "dlq"
+
+	// DevelopmentInsecure is an explicit local-only opt-in for plaintext Kafka.
+	// Its zero value is false, which requires TLS 1.3 in every production path.
+	DevelopmentInsecure bool
+	TLSCAFile           string // Empty uses the platform trust store.
+	TLSServerName       string
+	TLSClientCertFile   string
+	TLSClientKeyFile    string
+
+	// SASL credentials are optional, but must be supplied as a complete pair.
+	// When set, SCRAM-SHA-512 is used for both source and DLQ connections.
+	SASLUsername string
+	SASLPassword string
 	// DLQTopic selects the built-in synchronous Kafka dead-letter writer. It
 	// must be nonempty and different from Topic when PoisonPolicy is "dlq",
 	// unless a custom PoisonHandler is provided.
@@ -134,8 +152,12 @@ func NewKafka(config KafkaConfig) (*KafkaConsumer, error) {
 			return nil, errors.New("Kafka DLQ topic must differ from source topic")
 		}
 	}
+	dialer, err := newKafkaDialer(config)
+	if err != nil {
+		return nil, err
+	}
 	consumer := &KafkaConsumer{
-		reader:        kafka.NewReader(kafka.ReaderConfig{Brokers: config.Brokers, Topic: config.Topic, GroupID: config.GroupID, MinBytes: 1, MaxBytes: 10e6, CommitInterval: 0}),
+		reader:        kafka.NewReader(kafka.ReaderConfig{Brokers: config.Brokers, Topic: config.Topic, GroupID: config.GroupID, Dialer: dialer, MinBytes: 1, MaxBytes: 10e6, CommitInterval: 0}),
 		maxAttempts:   config.MaxAttempts,
 		retryBackoff:  config.RetryBackoff,
 		poisonPolicy:  config.PoisonPolicy,
@@ -146,6 +168,7 @@ func NewKafka(config KafkaConfig) (*KafkaConsumer, error) {
 		consumer.dlqWriter = &kafka.Writer{
 			Addr:            kafka.TCP(config.Brokers...),
 			Topic:           config.DLQTopic,
+			Transport:       kafkaTransport(dialer),
 			RequiredAcks:    kafka.RequireAll,
 			Async:           false,
 			BatchSize:       1,
@@ -158,6 +181,87 @@ func NewKafka(config KafkaConfig) (*KafkaConsumer, error) {
 		}
 	}
 	return consumer, nil
+}
+
+func newKafkaDialer(config KafkaConfig) (*kafka.Dialer, error) {
+	caFile := strings.TrimSpace(config.TLSCAFile)
+	serverName := strings.TrimSpace(config.TLSServerName)
+	certFile := strings.TrimSpace(config.TLSClientCertFile)
+	keyFile := strings.TrimSpace(config.TLSClientKeyFile)
+	username := strings.TrimSpace(config.SASLUsername)
+	if (certFile == "") != (keyFile == "") {
+		return nil, errors.New("Kafka TLS client certificate and key must be supplied together")
+	}
+	if (username == "") != (config.SASLPassword == "") {
+		return nil, errors.New("Kafka SASL username and password must be supplied together")
+	}
+	if config.DevelopmentInsecure && (caFile != "" || serverName != "" || certFile != "") {
+		return nil, errors.New("Kafka TLS options cannot be combined with development-insecure plaintext")
+	}
+	if config.DevelopmentInsecure && username != "" {
+		return nil, errors.New("Kafka SASL credentials cannot be sent over development-insecure plaintext")
+	}
+
+	dialer := &kafka.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}
+	if !config.DevelopmentInsecure {
+		tlsConfig, err := kafkaTLSConfig(config)
+		if err != nil {
+			return nil, err
+		}
+		dialer.TLS = tlsConfig
+	}
+	if username != "" {
+		mechanism, err := scram.Mechanism(scram.SHA512, username, config.SASLPassword)
+		if err != nil {
+			return nil, fmt.Errorf("configure Kafka SCRAM-SHA-512: %w", err)
+		}
+		dialer.SASLMechanism = mechanism
+	}
+	return dialer, nil
+}
+
+// kafkaTransport translates the reader's Dialer security policy to the writer
+// transport API used by kafka-go 0.4. This keeps built-in DLQ writes on the
+// same TLS/SASL policy as source reads.
+func kafkaTransport(dialer *kafka.Dialer) *kafka.Transport {
+	netDialer := &net.Dialer{
+		Timeout:       dialer.Timeout,
+		Deadline:      dialer.Deadline,
+		LocalAddr:     dialer.LocalAddr,
+		FallbackDelay: dialer.FallbackDelay,
+		KeepAlive:     dialer.KeepAlive,
+	}
+	return &kafka.Transport{
+		Dial:        netDialer.DialContext,
+		DialTimeout: dialer.Timeout,
+		IdleTimeout: 30 * time.Second,
+		ClientID:    dialer.ClientID,
+		TLS:         dialer.TLS,
+		SASL:        dialer.SASLMechanism,
+	}
+}
+
+func kafkaTLSConfig(config KafkaConfig) (*tls.Config, error) {
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS13, ServerName: strings.TrimSpace(config.TLSServerName)}
+	if caFile := strings.TrimSpace(config.TLSCAFile); caFile != "" {
+		pem, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("read Kafka TLS CA: %w", err)
+		}
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(pem) {
+			return nil, errors.New("Kafka TLS CA contains no certificates")
+		}
+		tlsConfig.RootCAs = roots
+	}
+	if certFile := strings.TrimSpace(config.TLSClientCertFile); certFile != "" {
+		certificate, err := tls.LoadX509KeyPair(certFile, strings.TrimSpace(config.TLSClientKeyFile))
+		if err != nil {
+			return nil, fmt.Errorf("load Kafka TLS client certificate: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{certificate}
+	}
+	return tlsConfig, nil
 }
 func (k *KafkaConsumer) Consume(ctx context.Context, handle func(context.Context, Event) error) error {
 	if handle == nil {

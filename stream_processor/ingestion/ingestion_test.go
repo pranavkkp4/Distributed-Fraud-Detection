@@ -2,7 +2,11 @@ package ingestion
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,6 +48,64 @@ func TestKafkaConfigRequiresDurableDLQHandler(t *testing.T) {
 	}
 }
 
+func TestKafkaTransportDefaultsToTLS13AndValidatesCredentials(t *testing.T) {
+	dialer, err := newKafkaDialer(KafkaConfig{})
+	if err != nil {
+		t.Fatalf("production Kafka transport: %v", err)
+	}
+	if dialer.TLS == nil || dialer.TLS.MinVersion != tls.VersionTLS13 {
+		t.Fatalf("Kafka TLS config = %#v, want TLS 1.3", dialer.TLS)
+	}
+	if dialer.TLS.RootCAs != nil {
+		t.Fatal("empty CA file should retain platform root verification")
+	}
+
+	for _, config := range []KafkaConfig{
+		{SASLUsername: "fraud"},
+		{SASLPassword: "secret"},
+		{TLSClientCertFile: "client.pem"},
+		{TLSClientKeyFile: "client-key.pem"},
+		{DevelopmentInsecure: true, TLSCAFile: "ca.pem"},
+		{DevelopmentInsecure: true, SASLUsername: "fraud", SASLPassword: "secret"},
+	} {
+		if _, err := newKafkaDialer(config); err == nil {
+			t.Fatalf("partial Kafka credentials were accepted: %#v", config)
+		}
+	}
+}
+
+func TestKafkaTransportConfiguresSCRAMAndValidatesCA(t *testing.T) {
+	dialer, err := newKafkaDialer(KafkaConfig{SASLUsername: "fraud", SASLPassword: "secret", TLSServerName: "broker.internal"})
+	if err != nil {
+		t.Fatalf("configure SCRAM: %v", err)
+	}
+	if dialer.SASLMechanism == nil || dialer.SASLMechanism.Name() != "SCRAM-SHA-512" || dialer.TLS.ServerName != "broker.internal" {
+		t.Fatalf("Kafka dialer did not preserve TLS/SASL settings: %#v", dialer)
+	}
+
+	missingCA := filepath.Join(t.TempDir(), "missing-ca.pem")
+	if _, err := newKafkaDialer(KafkaConfig{TLSCAFile: missingCA}); err == nil || !strings.Contains(err.Error(), "read Kafka TLS CA") {
+		t.Fatalf("missing Kafka CA error = %v", err)
+	}
+	invalidCA := filepath.Join(t.TempDir(), "invalid-ca.pem")
+	if err := os.WriteFile(invalidCA, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newKafkaDialer(KafkaConfig{TLSCAFile: invalidCA}); err == nil || !strings.Contains(err.Error(), "contains no certificates") {
+		t.Fatalf("invalid Kafka CA error = %v", err)
+	}
+}
+
+func TestKafkaDevelopmentInsecureOptInOmitsTLS(t *testing.T) {
+	dialer, err := newKafkaDialer(KafkaConfig{DevelopmentInsecure: true})
+	if err != nil {
+		t.Fatalf("development Kafka transport: %v", err)
+	}
+	if dialer.TLS != nil {
+		t.Fatal("development-insecure Kafka transport unexpectedly enabled TLS")
+	}
+}
+
 func TestBuiltInDLQWriterIsSynchronousAndRequireAll(t *testing.T) {
 	consumer, err := NewKafka(KafkaConfig{
 		Brokers:      []string{"localhost:9092"},
@@ -53,6 +115,8 @@ func TestBuiltInDLQWriterIsSynchronousAndRequireAll(t *testing.T) {
 		PoisonPolicy: "dlq",
 		MaxAttempts:  2,
 		RetryBackoff: time.Millisecond,
+		SASLUsername: "fraud",
+		SASLPassword: "secret",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -61,6 +125,10 @@ func TestBuiltInDLQWriterIsSynchronousAndRequireAll(t *testing.T) {
 	writer, ok := consumer.dlqWriter.(*kafka.Writer)
 	if !ok || writer.Async || writer.RequiredAcks != kafka.RequireAll || writer.MaxAttempts != 2 || writer.BatchSize != 1 {
 		t.Fatalf("unsafe DLQ writer: %#v", consumer.dlqWriter)
+	}
+	transport, ok := writer.Transport.(*kafka.Transport)
+	if !ok || transport.TLS == nil || transport.TLS.MinVersion != tls.VersionTLS13 || transport.SASL == nil || transport.SASL.Name() != "SCRAM-SHA-512" {
+		t.Fatalf("DLQ writer did not inherit secure Kafka transport: %#v", writer.Transport)
 	}
 }
 

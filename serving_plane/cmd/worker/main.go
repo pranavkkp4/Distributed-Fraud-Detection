@@ -81,10 +81,10 @@ func (m *measuredEngine) handler() http.Handler {
 		fmt.Fprintf(&output, "fraud_worker_batches_total %d\n", m.batches.Load())
 		labels := [...]string{"0.0001", "0.0005", "0.001", "0.005", "0.01", "0.02", "+Inf"}
 		for i, label := range labels {
-			fmt.Fprintf(&output, "fraud_worker_request_duration_seconds_bucket{le=%q} %d\n", label, m.durationBuckets[i].Load())
+			fmt.Fprintf(&output, "fraud_worker_batch_duration_seconds_bucket{le=%q} %d\n", label, m.durationBuckets[i].Load())
 		}
-		fmt.Fprintf(&output, "fraud_worker_request_duration_seconds_sum %g\n", float64(m.durationNanos.Load())/float64(time.Second))
-		fmt.Fprintf(&output, "fraud_worker_request_duration_seconds_count %d\n", m.batches.Load())
+		fmt.Fprintf(&output, "fraud_worker_batch_duration_seconds_sum %g\n", float64(m.durationNanos.Load())/float64(time.Second))
+		fmt.Fprintf(&output, "fraud_worker_batch_duration_seconds_count %d\n", m.batches.Load())
 		_, _ = w.Write([]byte(output.String()))
 	})
 	return mux

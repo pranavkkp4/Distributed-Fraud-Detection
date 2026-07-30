@@ -3,9 +3,12 @@ package featurestore
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -82,25 +85,86 @@ type Redis struct {
 	timeout time.Duration
 }
 
+// RedisConfig configures a feature-store connection. UseTLS enables TLS 1.3
+// with the platform trust roots by default; CAFile selects a private trust root.
+// Client certificates support Redis deployments that require mutual TLS.
+type RedisConfig struct {
+	Address    string
+	Width      int
+	Timeout    time.Duration
+	Username   string
+	Password   string
+	UseTLS     bool
+	CAFile     string
+	ServerName string
+	CertFile   string
+	KeyFile    string
+}
+
+// NewRedis is the legacy local-development convenience constructor. Production
+// code should use NewRedisWithConfig to explicitly select authenticated TLS.
 func NewRedis(address string, width int, timeout time.Duration) (*Redis, error) {
-	if address == "" || width < 1 {
+	return NewRedisWithConfig(RedisConfig{Address: address, Width: width, Timeout: timeout})
+}
+
+func NewRedisWithConfig(config RedisConfig) (*Redis, error) {
+	if config.Address == "" || config.Width < 1 {
 		return nil, errors.New("Redis address and positive feature width are required")
 	}
-	if timeout <= 0 {
-		timeout = 50 * time.Millisecond
+	if config.Timeout <= 0 {
+		config.Timeout = 50 * time.Millisecond
+	}
+	tlsConfig, err := redisTLSConfig(config.UseTLS, config.CAFile, config.ServerName, config.CertFile, config.KeyFile)
+	if err != nil {
+		return nil, err
 	}
 	client := redis.NewClient(&redis.Options{
-		Addr:            address,
+		Addr:            config.Address,
+		Username:        config.Username,
+		Password:        config.Password,
+		TLSConfig:       tlsConfig,
 		Protocol:        2,
-		DialTimeout:     timeout,
-		ReadTimeout:     timeout,
-		WriteTimeout:    timeout,
+		DialTimeout:     config.Timeout,
+		ReadTimeout:     config.Timeout,
+		WriteTimeout:    config.Timeout,
 		PoolSize:        32,
 		MinIdleConns:    1,
 		MaxRetries:      -1,
 		DisableIdentity: true,
 	})
-	return &Redis{client: client, width: width, timeout: timeout}, nil
+	return &Redis{client: client, width: config.Width, timeout: config.Timeout}, nil
+}
+
+func redisTLSConfig(useTLS bool, caFile, serverName, certFile, keyFile string) (*tls.Config, error) {
+	if (certFile == "") != (keyFile == "") {
+		return nil, errors.New("Redis TLS client certificate and key must be supplied together")
+	}
+	if !useTLS {
+		if caFile != "" || serverName != "" || certFile != "" {
+			return nil, errors.New("Redis TLS options require UseTLS=true")
+		}
+		return nil, nil
+	}
+	var roots *x509.CertPool
+	if caFile != "" {
+		roots = x509.NewCertPool()
+		pem, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("read Redis TLS CA: %w", err)
+		}
+		if !roots.AppendCertsFromPEM(pem) {
+			return nil, errors.New("Redis TLS CA contains no certificates")
+		}
+	}
+	config := &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: roots, ServerName: serverName}
+	if certFile != "" {
+		certificate, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("load Redis TLS client certificate: %w", err)
+		}
+		config.Certificates = []tls.Certificate{certificate}
+	}
+	return config, nil
 }
 
 func (r *Redis) Get(ctx context.Context, key string) ([]float64, error) {

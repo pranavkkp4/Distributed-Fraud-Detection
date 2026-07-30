@@ -51,6 +51,30 @@ func TestRedisMaterializerExactVectorAndReuse(t *testing.T) {
 	}
 }
 
+func TestRedisMaterializerConfigValidationAndCredentials(t *testing.T) {
+	for _, config := range []RedisConfig{
+		{Address: "redis:6379", CertFile: "client.pem"},
+		{Address: "redis:6379", CAFile: "ca.pem"},
+		{Address: "redis:6379", UseTLS: true, CAFile: "missing.pem"},
+	} {
+		if _, err := NewRedisMaterializerWithConfig(config); err == nil {
+			t.Fatalf("accepted invalid Redis materializer config: %#v", config)
+		}
+	}
+	address := startMaterializerRESPServer(t, func(conn net.Conn, _ []string) {
+		_, _ = io.WriteString(conn, "+OK\r\n")
+	})
+	materializer, err := NewRedisMaterializerWithConfig(RedisConfig{Address: address, Username: "fraud", Password: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer materializer.Close()
+	options := materializer.client.Options()
+	if options.Username != "fraud" || options.Password != "secret" || options.TLSConfig != nil {
+		t.Fatalf("unexpected Redis options: %#v", options)
+	}
+}
+
 func TestRedisMaterializerProtocolDeadlineAndValidation(t *testing.T) {
 	t.Run("truncated", func(t *testing.T) {
 		address := startMaterializerRESPServer(t, func(conn net.Conn, _ []string) {
