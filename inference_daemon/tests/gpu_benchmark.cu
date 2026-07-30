@@ -4,11 +4,13 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <numeric>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -27,6 +29,18 @@ struct LatencySummary {
   bool valid{};
 };
 
+LatencySummary summarize(std::vector<double> samples) {
+  if (samples.empty()) return {};
+  std::sort(samples.begin(), samples.end());
+  const auto percentile = [&](double quantile) {
+    const auto rank = static_cast<std::size_t>(std::ceil(quantile * samples.size()));
+    return samples[(std::max<std::size_t>)(1, rank) - 1];
+  };
+  return {std::accumulate(samples.begin(), samples.end(), 0.0) / samples.size(),
+          percentile(0.50), percentile(0.90), percentile(0.99), percentile(0.999),
+          samples.front(), samples.back(), true};
+}
+
 LatencySummary elapsed_us(bool graph, int warmup, int iterations) {
   for (int i = 0; i < warmup; ++i) {
     const auto result = graph ? fraud::daemon::replay_inference_graph(32)
@@ -43,14 +57,7 @@ LatencySummary elapsed_us(bool graph, int warmup, int iterations) {
     if (result.capability != fraud::daemon::CudaCapability::ready) return {};
     samples.push_back(std::chrono::duration<double, std::micro>(stop - start).count());
   }
-  std::sort(samples.begin(), samples.end());
-  const auto percentile = [&](double quantile) {
-    const auto rank = static_cast<std::size_t>(std::ceil(quantile * samples.size()));
-    return samples[(std::max<std::size_t>)(1, rank) - 1];
-  };
-  return {std::accumulate(samples.begin(), samples.end(), 0.0) / samples.size(),
-          percentile(0.50), percentile(0.90), percentile(0.99), percentile(0.999),
-          samples.front(), samples.back(), true};
+  return summarize(std::move(samples));
 }
 
 void print_summary(const char* name, const LatencySummary& value) {
@@ -58,6 +65,34 @@ void print_summary(const char* name, const LatencySummary& value) {
             << ",\"p90\":" << value.p90 << ",\"p99\":" << value.p99
             << ",\"p999\":" << value.p999 << ",\"min\":" << value.minimum
             << ",\"max\":" << value.maximum << '}';
+}
+
+struct OverlapProbe { LatencySummary host_prep; LatencySummary total; std::uint64_t checksum{}; bool valid{}; };
+OverlapProbe overlap_probe(int warmup, int iterations) {
+  std::vector<double> host_samples, total_samples;
+  host_samples.reserve(static_cast<std::size_t>(iterations));
+  total_samples.reserve(static_cast<std::size_t>(iterations));
+  std::uint64_t checksum{};
+  for (int i = -warmup; i < iterations; ++i) {
+    const auto total_start = std::chrono::steady_clock::now();
+    if (fraud::daemon::launch_inference_graph(32).capability != fraud::daemon::CudaCapability::ready) return {};
+    const auto host_start = std::chrono::steady_clock::now();
+    std::array<std::uint64_t, 256> positions{};
+    std::array<std::uint32_t, 256> statuses{};
+    for (std::size_t item = 0; item < positions.size(); ++item) {
+      positions[item] = static_cast<std::uint64_t>(i + warmup + 1) + item;
+      statuses[item] = (item & 7U) == 0 ? 422U : 200U;
+      checksum ^= positions[item] + statuses[item];
+    }
+    const auto host_stop = std::chrono::steady_clock::now();
+    if (fraud::daemon::synchronize_inference_graph(32).capability != fraud::daemon::CudaCapability::ready) return {};
+    const auto total_stop = std::chrono::steady_clock::now();
+    if (i >= 0) {
+      host_samples.push_back(std::chrono::duration<double, std::micro>(host_stop - host_start).count());
+      total_samples.push_back(std::chrono::duration<double, std::micro>(total_stop - total_start).count());
+    }
+  }
+  return {summarize(std::move(host_samples)), summarize(std::move(total_samples)), checksum, true};
 }
 }
 
@@ -81,12 +116,17 @@ int main() {
   constexpr int warmup = 100, iterations = 2000;
   const auto graph_us = elapsed_us(true, warmup, iterations);
   const auto direct_us = elapsed_us(false, warmup, iterations);
+  constexpr int overlap_warmup = 50, overlap_iterations = 500;
+  const auto overlap = overlap_probe(overlap_warmup, overlap_iterations);
   fraud::daemon::shutdown_inference_graphs();
   cudaFree(device_c); cudaFree(device_b); cudaFree(device_a);
-  if (!graph_us.valid || !direct_us.valid) return 1;
+  if (!graph_us.valid || !direct_us.valid || !overlap.valid) return 1;
   std::cout << "{\"gpu\":\"cuda\",\"m\":128,\"n\":128,\"k\":64,\"int8_gemm\":\"pass\",\"warmup\":"
             << warmup << ",\"iterations\":" << iterations << ',';
   print_summary("graph_wall_us", graph_us); std::cout << ',';
-  print_summary("direct_wall_us", direct_us); std::cout << "}\n";
+  print_summary("direct_wall_us", direct_us); std::cout << ",\"overlap_probe\":{\"iterations\":" << overlap_iterations << ',';
+  print_summary("host_prep_us", overlap.host_prep); std::cout << ',';
+  print_summary("launch_prep_sync_us", overlap.total);
+  std::cout << ",\"checksum\":" << overlap.checksum << "}}\n";
   return 0;
 }
