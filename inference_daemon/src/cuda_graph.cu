@@ -31,11 +31,20 @@ CudaGraphStatus capture_inference_graph(std::size_t batch_size) noexcept {
   return status(result, "CUDA Graph capture/instantiate failed");
 }
 CudaGraphStatus replay_inference_graph(std::size_t batch_size) noexcept {
+  const auto launched = launch_inference_graph(batch_size);
+  if (launched.capability != CudaCapability::ready) return launched;
+  return synchronize_inference_graph(batch_size);
+}
+CudaGraphStatus launch_inference_graph(std::size_t batch_size) noexcept {
   if (batch_size == 0 || batch_size > kMaxBatch || graphs[batch_size].exec == nullptr) return {CudaCapability::unavailable, "batch size was not captured at startup"};
   const auto& slot = graphs[batch_size];
-  auto result = cudaGraphLaunch(slot.exec, slot.stream);
-  if (result == cudaSuccess) result = cudaStreamSynchronize(slot.stream);
+  const auto result = cudaGraphLaunch(slot.exec, slot.stream);
   return status(result, "cudaGraphLaunch failed");
+}
+CudaGraphStatus synchronize_inference_graph(std::size_t batch_size) noexcept {
+  if (batch_size == 0 || batch_size > kMaxBatch || graphs[batch_size].exec == nullptr) return {CudaCapability::unavailable, "batch size was not captured at startup"};
+  const auto& slot = graphs[batch_size];
+  return status(cudaStreamSynchronize(slot.stream), "cudaStreamSynchronize failed");
 }
 CudaGraphStatus direct_inference_forward(std::size_t batch_size) noexcept {
   if (batch_size == 0 || batch_size > kMaxBatch || graphs[batch_size].device == nullptr) return {CudaCapability::unavailable, "batch size was not initialized at startup"};

@@ -12,6 +12,8 @@ struct CudaGraphStatus final { CudaCapability capability; std::string_view messa
 // once per supported batch size, instantiate cudaGraphExec_t, then replay it.
 // CPU-only builds return unavailable without pretending CUDA Graph is active.
 CudaGraphStatus capture_inference_graph(std::size_t batch_size) noexcept;
+CudaGraphStatus launch_inference_graph(std::size_t batch_size) noexcept;
+CudaGraphStatus synchronize_inference_graph(std::size_t batch_size) noexcept;
 CudaGraphStatus replay_inference_graph(std::size_t batch_size) noexcept;
 CudaGraphStatus direct_inference_forward(std::size_t batch_size) noexcept;
 void shutdown_inference_graphs() noexcept;

@@ -3,6 +3,7 @@
 #include "fraud_daemon/shared_memory.hpp"
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
@@ -26,17 +27,28 @@ void process_batch(void* opaque, fraud::daemon::SlotMetadata* const* slots, std:
   // CPU reference decision. The native model adapter can replace this handler
   // without changing queue ownership or its no-allocation scheduler contract.
   std::uint32_t response_status = 200;
+  fraud::daemon::CudaGraphStatus launched{fraud::daemon::CudaCapability::unavailable,
+                                          "no active CUDA work"};
   if (context.cuda_graphs_ready && inference_count != 0) {
-    const auto result = fraud::daemon::replay_inference_graph(inference_count);
-    // Keep the completed response deterministic and fail closed if an already
-    // captured graph cannot replay. No allocator or lock is entered here.
-    if (result.capability != fraud::daemon::CudaCapability::ready) response_status = 503;
+    launched = fraud::daemon::launch_inference_graph(inference_count);
+    if (launched.capability != fraud::daemon::CudaCapability::ready) response_status = 503;
+  }
+  // Prepare response metadata while the nonblocking graph runs. This stack-only
+  // work is deliberately placed between launch and synchronization so a Systems
+  // trace can verify genuine host/device overlap in the daemon hot path.
+  std::array<std::uint64_t, 256> positions{};
+  std::array<std::uint32_t, 256> statuses{};
+  for (std::size_t i = 0; i < count; ++i) {
+    positions[i] = fraud::daemon::atomic_load(slots[i]->sequence) - 1;
+    statuses[i] = slots[i]->payload_size == 0 ? 422U : response_status;
+  }
+  if (launched.capability == fraud::daemon::CudaCapability::ready &&
+      fraud::daemon::synchronize_inference_graph(inference_count).capability !=
+          fraud::daemon::CudaCapability::ready) {
+    for (std::size_t i = 0; i < count; ++i) if (slots[i]->payload_size != 0) statuses[i] = 503;
   }
   for (std::size_t i = 0; i < count; ++i) {
-    auto* slot = slots[i];
-    const auto position = fraud::daemon::atomic_load(slot->sequence) - 1;
-    const auto status = slot->payload_size == 0 ? 422U : response_status;
-    context.ring->complete(*slot, position, status, 0, 0.0F, now_ns);
+    context.ring->complete(*slots[i], positions[i], statuses[i], 0, 0.0F, now_ns);
   }
 }
 bool parse_u32(const char* text, std::uint32_t& value) {

@@ -4,6 +4,8 @@
 namespace fraud::daemon {
 #if !defined(FRAUD_DAEMON_CUDA_LINKED)
 CudaGraphStatus capture_inference_graph(std::size_t) noexcept { return {CudaCapability::unavailable, "built without CUDA"}; }
+CudaGraphStatus launch_inference_graph(std::size_t) noexcept { return {CudaCapability::unavailable, "built without CUDA"}; }
+CudaGraphStatus synchronize_inference_graph(std::size_t) noexcept { return {CudaCapability::unavailable, "built without CUDA"}; }
 CudaGraphStatus replay_inference_graph(std::size_t) noexcept { return {CudaCapability::unavailable, "built without CUDA"}; }
 CudaGraphStatus direct_inference_forward(std::size_t) noexcept { return {CudaCapability::unavailable, "built without CUDA"}; }
 void shutdown_inference_graphs() noexcept {}
