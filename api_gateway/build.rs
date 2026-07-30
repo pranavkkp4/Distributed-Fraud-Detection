@@ -4,11 +4,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn normalized_generated_source(path: &Path) -> Vec<u8> {
-    fs::read(path)
-        .expect("read generated binding")
-        .split(|byte| *byte == b'\r')
-        .flat_map(|chunk| chunk.iter().copied())
-        .collect()
+    let source = String::from_utf8(fs::read(path).expect("read generated binding"))
+        .expect("flatc generated non-UTF-8 Rust source");
+    // The official Windows and Linux flatc archives differ in harmless blank
+    // lines and redundant module-local `extern crate alloc` declarations.
+    // Compare the generated token stream so schema/API changes still fail CI.
+    source
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>()
+        .replace("externcratealloc;", "")
+        .into_bytes()
 }
 
 fn main() {
