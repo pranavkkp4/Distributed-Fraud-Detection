@@ -1,0 +1,16 @@
+// Wire contract used by api_gateway and inference_daemon.  This file is the
+// source of truth; do not hand-edit generated bindings.
+namespace fraud.ipc;
+
+table Transaction {
+  request_id:ulong;
+  transaction_id:string (required);
+  account_id:string (required);
+  amount_micros:long;
+  currency:string (required);
+  occurred_at_ns:ulong;
+  merchant_category:string;
+}
+
+root_type Transaction;
+file_identifier "FRTX";

@@ -7,3 +7,4 @@
 *.pdf binary
 *.ncu-rep binary
 *.nsys-rep binary
+api_gateway/src/generated/transaction_generated.rs whitespace=-blank-at-eof
