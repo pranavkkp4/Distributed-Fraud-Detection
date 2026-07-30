@@ -47,7 +47,7 @@ class FraudModelOutput:
     """Model outputs consumed by fraud policy and explanation components."""
 
     fraud_probability: Tensor
-    calibrated_confidence: Tensor
+    confidence_score: Tensor
     explanation: Tensor
 
 
@@ -116,6 +116,7 @@ class FixedShapeTransactionTransformer(nn.Module):
         pooled = self.final_norm(self.encoder(encoded)[:, 0])
         return FraudModelOutput(
             fraud_probability=torch.sigmoid(self.fraud_head(pooled)),
-            calibrated_confidence=torch.sigmoid(self.confidence_head(pooled)),
+            # This is a learned score, not a held-out calibrated probability.
+            confidence_score=torch.sigmoid(self.confidence_head(pooled)),
             explanation=torch.tanh(self.explanation_head(pooled)),
         )

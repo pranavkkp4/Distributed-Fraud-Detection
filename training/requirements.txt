@@ -3,3 +3,5 @@ torch>=2.6
 # Optional: required only for ONNX model emission/validation.
 onnx>=1.14
 onnxscript>=0.5
+# Execute the exported graph in CI so ABI checks also include numeric parity.
+onnxruntime>=1.20

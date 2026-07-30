@@ -4,6 +4,6 @@ The serving plane consumes the immutable bundles emitted by this package; it
 does not import this package at request time.
 """
 
-from .bundle import ModelBundleMetadata
+from .bundle import BundleVerificationError, ModelBundleMetadata, verify_model_bundle
 
-__all__ = ["ModelBundleMetadata"]
+__all__ = ["BundleVerificationError", "ModelBundleMetadata", "verify_model_bundle"]
