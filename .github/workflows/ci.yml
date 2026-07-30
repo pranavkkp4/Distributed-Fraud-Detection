@@ -74,6 +74,12 @@ jobs:
         run: cmake --build build/execution-cpu --parallel
       - name: Run CTest
         run: ctest --test-dir build/execution-cpu --output-on-failure
+      - name: Configure CPU-only inference daemon
+        run: cmake -S inference_daemon -B build/inference-daemon -DFRAUD_DAEMON_ENABLE_CUDA=OFF -DBUILD_TESTING=ON
+      - name: Build and test inference daemon
+        run: |
+          cmake --build build/inference-daemon --parallel
+          ctest --test-dir build/inference-daemon --output-on-failure
       - name: Validate repository configuration
         run: python scripts/validate_configs.py
       - name: Validate Compose model and Makefile entry points
@@ -198,3 +204,49 @@ jobs:
 
           python tests/integration/smoke_load.py --url http://127.0.0.1:8080 --requests 12 --concurrency 4
           mvn -B -ntp -f tests/api/pom.xml test -DbaseUrl=http://127.0.0.1:8080 -DauthToken=ci-gateway-token -DmaterializedEntity=ci-materialized-account
+
+  shared-memory-ipc:
+    name: Rust gateway, FlatBuffers, load tester, and live IPC
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      RUSTUP_TOOLCHAIN: '1.81.0'
+      FRAUD_REQUIRE_FLATC: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.x'
+          cache-dependency-path: load_tester/go.sum
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.81.0 --profile minimal --component rustfmt --component clippy
+      - name: Install checksum-verified FlatBuffers compiler
+        shell: bash
+        run: |
+          flatc_path="$(bash scripts/install_flatc_linux.sh "$RUNNER_TEMP/flatc-25.12.19")"
+          echo "$(dirname "$flatc_path")" >> "$GITHUB_PATH"
+      - name: Verify generated Rust and C++ FlatBuffers bindings
+        run: bash scripts/verify_flatbuffers.sh flatc
+      - name: Format, lint, and test Rust gateway
+        working-directory: api_gateway
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked --all-targets -- -D warnings
+          cargo test --locked --all-targets
+      - name: Vet and test Go load generator
+        working-directory: load_tester
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test ./...
+      - name: Build CPU inference daemon and Rust gateway
+        run: |
+          cmake -S inference_daemon -B build/inference-daemon -DFRAUD_DAEMON_ENABLE_CUDA=OFF -DBUILD_TESTING=ON
+          cmake --build build/inference-daemon --parallel
+          cargo build --manifest-path api_gateway/Cargo.toml --release --locked
+      - name: Exercise authenticated HTTP over live System V IPC
+        shell: bash
+        env:
+          FRAUD_DAEMON_BIN: ${{ github.workspace }}/build/inference-daemon/fraud_inference_daemon
+          FRAUD_GATEWAY_BIN: ${{ github.workspace }}/api_gateway/target/release/fraud-shm-api-gateway
+        run: bash scripts/test_ipc_integration.sh

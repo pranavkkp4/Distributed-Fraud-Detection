@@ -4,20 +4,30 @@
 
 #include <atomic>
 #include <chrono>
+#include <csignal>
 #include <cstdlib>
 #include <iostream>
 #include <thread>
 
 namespace {
+volatile std::sig_atomic_t stop_requested{};
+void handle_signal(int) noexcept { stop_requested = 1; }
+
 struct WorkerContext { fraud::daemon::SharedRing* ring; bool cuda_graphs_ready{}; };
 void process_batch(void* opaque, fraud::daemon::SlotMetadata* const* slots, std::size_t count,
                    std::uint64_t now_ns) noexcept {
   auto& context = *static_cast<WorkerContext*>(opaque);
+  std::size_t inference_count{};
+  for (std::size_t i = 0; i < count; ++i) {
+    // A producer that fails after reserving a position publishes a zero-length
+    // cancellation record so the queue cannot develop a permanent hole.
+    if (slots[i]->payload_size != 0) ++inference_count;
+  }
   // CPU reference decision. The native model adapter can replace this handler
   // without changing queue ownership or its no-allocation scheduler contract.
   std::uint32_t response_status = 200;
-  if (context.cuda_graphs_ready) {
-    const auto result = fraud::daemon::replay_inference_graph(count);
+  if (context.cuda_graphs_ready && inference_count != 0) {
+    const auto result = fraud::daemon::replay_inference_graph(inference_count);
     // Keep the completed response deterministic and fail closed if an already
     // captured graph cannot replay. No allocator or lock is entered here.
     if (result.capability != fraud::daemon::CudaCapability::ready) response_status = 503;
@@ -25,7 +35,8 @@ void process_batch(void* opaque, fraud::daemon::SlotMetadata* const* slots, std:
   for (std::size_t i = 0; i < count; ++i) {
     auto* slot = slots[i];
     const auto position = fraud::daemon::atomic_load(slot->sequence) - 1;
-    context.ring->complete(*slot, position, response_status, 0, 0.0F, now_ns);
+    const auto status = slot->payload_size == 0 ? 422U : response_status;
+    context.ring->complete(*slot, position, status, 0, 0.0F, now_ns);
   }
 }
 bool parse_u32(const char* text, std::uint32_t& value) {
@@ -48,6 +59,8 @@ int main(int argc, char** argv) {
   std::string error;
   auto segment = fraud::daemon::SharedMemorySegment::create(key, slots, slot_size, error);
   if (!segment.valid()) { std::cerr << "daemon startup failed: " << error << '\n'; return 1; }
+  (void)std::signal(SIGINT, handle_signal);
+  (void)std::signal(SIGTERM, handle_signal);
   fraud::daemon::SharedRing ring(*segment.header());
   bool cuda_graphs_ready = true;
   for (std::size_t batch_size = 1; batch_size <= 32; ++batch_size) {
@@ -65,12 +78,13 @@ int main(int argc, char** argv) {
                                                process_batch, &context);
   std::cout << "ready: System V key=" << key << " slots=" << slots << " slot_size=" << slot_size << '\n';
   std::uint32_t idle_cycles{};
-  while (fraud::daemon::atomic_load(segment.header()->shutdown) == 0) {
+  while (stop_requested == 0 && fraud::daemon::atomic_load(segment.header()->shutdown) == 0) {
     if (batcher.poll_once()) { idle_cycles = 0; continue; }
     // Dedicated low-latency scheduler: bounded pause/yield rather than a fixed
     // sleep that can consume the 2ms SLA budget. Configurable by env if desired.
     if (++idle_cycles >= 64) { std::this_thread::yield(); idle_cycles = 0; }
   }
+  fraud::daemon::atomic_store(segment.header()->shutdown, 1);
   (void)batcher.flush();
   fraud::daemon::shutdown_inference_graphs();
   segment.mark_for_removal();
