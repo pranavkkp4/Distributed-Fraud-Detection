@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="330" viewBox="0 0 820 330">
+<rect width="100%" height="100%" fill="white"/>
+<style>text{font-family:Arial,sans-serif;fill:#17202a}.title{font-size:18px;font-weight:700}.lane{font-size:14px}.small{font-size:11px}</style>
+<text class="title" x="18" y="26">Nsight Systems: measured host/device intervals</text>
+<text class="lane" x="18" y="57">CUDA Graph sample (0-85 us)</text>
+<text class="lane" text-anchor="end" x="150" y="99">CPU</text>
+<text class="lane" text-anchor="end" x="150" y="152">GPU</text>
+<rect x="160.00" y="82" width="195.43" height="24" rx="2" fill="#1e4e79"/>
+<text class="small" fill="white" x="165.00" y="98">cudaGraphLaunch</text>
+<rect x="221.11" y="135" width="411.26" height="24" rx="2" fill="#4f9d69"/>
+<text class="small" fill="white" x="226.11" y="151">cudaGraphExec</text>
+<rect x="355.43" y="82" width="2.31" height="24" rx="2" fill="#d9822b"/>
+<rect x="357.74" y="82" width="380.18" height="24" rx="2" fill="#75808a"/>
+<text class="small" fill="white" x="362.74" y="98">cudaStreamSynchronize</text>
+<line x1="355.43" y1="76" x2="355.43" y2="165" stroke="#d9822b" stroke-width="2"/>
+<text class="small" x="360.43" y="172">0.340 us host preparation overlaps graph interval</text>
+<text class="lane" x="18" y="218">Direct async-copy sample (0-11 us)</text>
+<text class="lane" text-anchor="end" x="150" y="255">CPU</text>
+<text class="lane" text-anchor="end" x="150" y="300">GPU</text>
+<rect x="160.00" y="238" width="201.89" height="23" rx="2" fill="#1e4e79"/>
+<text class="small" x="163.00" y="234">cudaMemcpyAsync_H2D_api</text>
+<rect x="443.63" y="283" width="55.30" height="23" rx="2" fill="#4f9d69"/>
+<text class="small" x="446.63" y="279">H2D_128_bytes</text>
+<rect x="381.66" y="238" width="304.27" height="23" rx="2" fill="#1e4e79"/>
+<text class="small" x="384.66" y="234">cudaLaunchKernel_api</text>
+</svg>

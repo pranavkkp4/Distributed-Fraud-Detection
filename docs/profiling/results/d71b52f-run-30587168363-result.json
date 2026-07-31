@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "commit": "d71b52fd17c8e500d2a67901031081fc492e6917",
+  "recorded_at": "2026-07-30T22:28:12Z",
+  "measurement_scope": "planned open-loop client arrival through authenticated HTTP response, Rust FlatBuffer serialization, System V shared-memory handoff, parser-enabled C++ FRTX verification, continuous batching, CPU reference handling, and response receipt; not GPU or production-model inference",
+  "aggregation": "one seeded observational integration run with 15,000 scheduled arrivals",
+  "hardware": {
+    "runner": "GitHub-hosted Ubuntu Azure virtual machine",
+    "cpu": "AMD EPYC 7763 64-Core Processor",
+    "logical_cpus": 4,
+    "gpu": "none",
+    "gpu_count": 0,
+    "network": "loopback HTTP"
+  },
+  "software": {
+    "os": "Ubuntu, Linux 6.17.0-1020-azure x86_64",
+    "cmake": "3.31.6",
+    "compiler": "GCC 13.3.0",
+    "rust": "1.81.0",
+    "go": "1.26.5",
+    "flatbuffers": "25.12.19",
+    "perf": "6.17.13"
+  },
+  "model": {
+    "bundle_sha256": "not applicable: deterministic CPU reference handler",
+    "numeric_backend": "authenticated HTTP + parser-verified FRTX FlatBuffers + System V IPC + CPU reference",
+    "transaction_verification": "parser-enabled FlatBuffers verification of the FRTX identifier, table bounds, required strings, and request metadata",
+    "cuda_graphs": "unavailable"
+  },
+  "load": {
+    "endpoint": "http://127.0.0.1:18081/v1/transactions",
+    "payload_mode": "transaction",
+    "duration_seconds": 9.962161655,
+    "warmup_seconds": 0,
+    "requests_per_second": 1500,
+    "arrival_distribution": "seeded open-loop Poisson",
+    "seed": 20260730,
+    "concurrency_limit": 128,
+    "request_timeout_ms": 2000,
+    "requests": 15000,
+    "entity_weights": {
+      "profile-primary": 8,
+      "profile-secondary": 2
+    }
+  },
+  "results": {
+    "started_at": "2026-07-30T22:28:13.550007359Z",
+    "finished_at": "2026-07-30T22:28:23.512169024Z",
+    "scheduled": 15000,
+    "completed": 15000,
+    "successful": 15000,
+    "errors": 0,
+    "status_counts": {
+      "200": 15000
+    },
+    "transport_errors": 0,
+    "non_2xx_responses": 0,
+    "latency_microseconds": {
+      "p25": 1695,
+      "p50": 2325,
+      "p75": 2837,
+      "p90": 3145,
+      "p95": 3261,
+      "p99": 3421,
+      "p999": 3939,
+      "max": 4943
+    },
+    "throughput_per_second": 1505.6973094259633,
+    "error_rate": 0.0,
+    "fallback_rate": 0.0,
+    "http_200": 15000
+  },
+  "provenance": {
+    "github_actions_run_id": 30587168363,
+    "github_actions_url": "https://github.com/pranavkkp4/Distributed-Fraud-Detection/actions/runs/30587168363",
+    "git_commit": "d71b52fd17c8e500d2a67901031081fc492e6917",
+    "captured_at_utc": "2026-07-30T22:28:12Z",
+    "perf_command": "perf record -F 499 -g --call-graph fp -p DAEMON_PID -- sleep 10",
+    "perf_reported_samples": 4988,
+    "perf_event_paranoid_before": 4,
+    "perf_event_paranoid_after": 1,
+    "kptr_restrict": 1,
+    "limitations": [
+      "CUDA Graph initialization was unavailable and the daemon used its CPU reference handler; this run contains no GPU measurements.",
+      "The GitHub-hosted runner is shared virtualized hardware, so this is reproducibility evidence rather than a production SLO or capacity claim.",
+      "Restricted kernel symbols and frame-pointer unwinding produced unknown frames; the FlameGraph SVG labels accumulated perf period weights as samples, so those labels are not literal event counts.",
+      "The flame graph represents sampled CPU time, not latency attribution, memory allocation tracing, or proof that every hot-path operation is allocation-free.",
+      "Only the C++ daemon was sampled; Rust gateway and Go client CPU costs are outside the flame graph."
+    ]
+  },
+  "artifacts": {
+    "latency_cdf": {
+      "file": "d71b52f-run-30587168363-latency-cdf.svg",
+      "sha256": "1cc91432e5cf5d2590c31d7426f32dc316f09e889c7b2cee40c5b8b134eed801"
+    },
+    "latency_distribution": {
+      "file": "d71b52f-run-30587168363-distribution.csv",
+      "sha256": "483cf52900ba9dea5fb071a0b0342d7e4a8f92529a3c661d526f9ad01c913e65"
+    },
+    "flamegraph": {
+      "file": "d71b52f-run-30587168363-flamegraph.svg",
+      "sha256": "6aed5ef2c5826beef22b4c458462839c64c1f4454e84a29da1345a556129ba3e"
+    },
+    "perf_folded": {
+      "file": "d71b52f-run-30587168363-perf-folded.txt",
+      "sha256": "0f3329409e4a6ed6934fd2c7be64f9ef72678f4d93706646c1c6af15632eb5d2"
+    },
+    "perf_diagnostics": {
+      "file": "d71b52f-run-30587168363-perf-diagnostics.txt",
+      "sha256": "b8bbc14a72a14683a69311609ded05c8b3e31e9dd0e32c9b6d8b6a7f7d3c375f"
+    },
+    "hardware_and_tool_provenance": {
+      "file": "d71b52f-run-30587168363-provenance.txt",
+      "sha256": "e6320794e47afdc4716a77d768c5fba9f0571240c1185231fc87709ce0b479d1"
+    }
+  }
+}

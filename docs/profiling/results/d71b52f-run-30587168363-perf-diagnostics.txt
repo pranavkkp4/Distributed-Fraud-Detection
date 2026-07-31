@@ -1,0 +1,24 @@
+perf_command=perf record -F 499 -g --call-graph fp -p DAEMON_PID -- sleep 10
+perf_event_paranoid_before=4
+kptr_restrict=1
+If capture fails, this file preserves the host diagnostic; latency artifacts remain measured and usable.
+kernel.perf_event_paranoid = 1
+perf_event_paranoid_after=1
+WARNING: Kernel address maps (/proc/{kallsyms,modules}) are restricted,
+check /proc/sys/kernel/kptr_restrict and /proc/sys/kernel/perf_event_paranoid.
+
+Samples in kernel functions may not be resolved if a suitable vmlinux
+file is not found in the buildid cache or in the vmlinux path.
+
+Samples in kernel modules won't be resolved at all.
+
+If some relocation was applied (e.g. kexec) symbols may be misresolved
+even with a suitable vmlinux or kallsyms file.
+
+Couldn't record kernel reference relocation symbol
+Symbol resolution may be skewed if relocation was used (e.g. kexec).
+Check /proc/kallsyms permission or run as root.
+[ perf record: Woken up 3 times to write data ]
+[ perf record: Captured and wrote 0.570 MB /home/runner/work/Distributed-Fraud-Detection/Distributed-Fraud-Detection/profile-artifacts/perf.data (4988 samples) ]
+perf_exit_status=0
+flamegraph_status=generated_from_perf_data

@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="217" viewBox="0 0 760 217">
+<rect width="100%" height="100%" fill="white"/>
+<style>text{font-family:Arial,sans-serif;fill:#17202a}.label{font-size:15px}.value{font-size:12px}.title{font-size:18px;font-weight:700}</style>
+<text class="title" x="18" y="26">Measured CUDA component latency (microseconds)</text>
+<rect x="410" y="14" width="13" height="13" fill="#1e4e79"/><text class="value" x="428" y="25">p50</text>
+<rect x="485" y="14" width="13" height="13" fill="#d9822b"/><text class="value" x="503" y="25">p99</text>
+<text class="label" text-anchor="end" x="180" y="76">Direct CUDA</text>
+<rect x="190" y="58" width="465.57" height="18" rx="2" fill="#d9822b" opacity="0.78"/>
+<rect x="190" y="80" width="323.73" height="18" rx="2" fill="#1e4e79"/>
+<text class="value" x="661.57" y="72">58.1</text>
+<text class="value" x="519.73" y="94">40.4</text>
+<text class="label" text-anchor="end" x="180" y="142">Graph replay</text>
+<rect x="190" y="124" width="476.79" height="18" rx="2" fill="#d9822b" opacity="0.78"/>
+<rect x="190" y="146" width="324.53" height="18" rx="2" fill="#1e4e79"/>
+<text class="value" x="672.79" y="138">59.5</text>
+<text class="value" x="520.53" y="160">40.5</text>
+</svg>

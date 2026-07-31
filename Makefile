@@ -7,6 +7,7 @@ FLATC ?= flatc
 MAVEN ?= mvn
 DOCKER ?= docker
 KUBECTL ?= kubectl
+XELATEX ?= xelatex
 BUILD_ROOT ?= build
 BUILD_CONFIG ?= Release
 CPU_BUILD := $(BUILD_ROOT)/execution-cpu
@@ -17,7 +18,7 @@ DAEMON_BUILD := $(BUILD_ROOT)/inference-daemon
 
 .PHONY: help fmt build-cpu build-cuda build-daemon build-rust test test-python test-go test-go-race \
 	test-cpp test-daemon test-rust test-load test-ipc verify-flatbuffers test-integration test-smoke test-api validate-config compose-config compose-up \
-	compose-down images-minikube deploy-minikube clean
+	compose-down images-minikube deploy-minikube paper clean
 
 help:
 	@$(PYTHON) -c "import re; p=open('Makefile', encoding='utf-8').read().splitlines(); print('Fraud inference engine targets:'); [print('  '+m.group(1)) for line in p if (m:=re.match(r'^([a-z][a-z0-9-]+):', line))]"
@@ -113,6 +114,11 @@ images-minikube:
 
 deploy-minikube:
 	$(KUBECTL) apply -k infrastructure/minikube
+
+paper:
+	$(PYTHON) scripts/generate_research_figures.py
+	$(XELATEX) -interaction=nonstopmode -halt-on-error -output-directory=docs/paper docs/paper/research_paper.tex
+	$(XELATEX) -interaction=nonstopmode -halt-on-error -output-directory=docs/paper docs/paper/research_paper.tex
 
 clean:
 	$(CMAKE) -E remove_directory $(CPU_BUILD)

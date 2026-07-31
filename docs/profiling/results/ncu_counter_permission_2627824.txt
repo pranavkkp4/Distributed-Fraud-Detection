@@ -1,0 +1,10 @@
+Nsight Compute 2026.2.1 connected to fraud_daemon_gpu_benchmark.exe but did not
+collect hardware-counter sections. The installed NVIDIA driver returned:
+
+  ERR_NVGPUCTRPERM - The user does not have permission to access NVIDIA GPU
+  Performance Counters on the target device 0.
+
+No attempt was made to bypass the host's profiler permission policy. Nsight
+Systems CUDA trace data is preserved separately. Occupancy, Tensor Core
+utilization, DRAM/L2 counters, register pressure, and warp-stall metrics remain
+unmeasured and are not claimed in the paper.

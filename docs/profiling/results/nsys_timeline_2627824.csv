@@ -1,0 +1,8 @@
+lane,event,start_us,end_us,duration_us,source
+CPU,cudaGraphLaunch,0.000,28.739,28.739,CUPTI_ACTIVITY_KIND_RUNTIME
+GPU,cudaGraphExec,8.987,69.467,60.480,CUPTI_ACTIVITY_KIND_GRAPH_TRACE
+CPU,response_metadata_prep,28.739,29.079,0.340,inferred_between_consecutive_runtime_calls
+CPU,cudaStreamSynchronize,29.079,84.988,55.909,CUPTI_ACTIVITY_KIND_RUNTIME
+CPU,cudaMemcpyAsync_H2D_api,0.000,4.206,4.206,CUPTI_ACTIVITY_KIND_RUNTIME_sample
+GPU,H2D_128_bytes,5.909,7.061,1.152,CUPTI_ACTIVITY_KIND_MEMCPY_sample
+CPU,cudaLaunchKernel_api,4.618,10.957,6.339,CUPTI_ACTIVITY_KIND_RUNTIME_sample

@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "commit": "2627824c5bb69773365e183f6e09686642c488f6",
+  "recorded_at": "2026-07-30T21:54:29.9062441Z",
+  "measurement_scope": "CPU wall time per warmed direct batch-32 H2D/forward/D2H sequence and stream synchronization; not API latency or full-model inference",
+  "aggregation": "median of five independently launched run summaries; each run contains 2,000 observations after 100 warmups",
+  "hardware": {
+    "cpu": "12th Gen Intel(R) Core(TM) i5-12400F",
+    "gpu": "NVIDIA GeForce RTX 3050 6 GiB",
+    "gpu_count": 1,
+    "compute_capability": "8.6",
+    "network": "not applicable (component benchmark)"
+  },
+  "software": {
+    "os": "Microsoft Windows 10 Pro 10.0.19045 build 19045",
+    "cuda": "13.3.73",
+    "driver": "595.79",
+    "compiler": "MSVC 19.44.35222",
+    "cutlass": "4.6.1"
+  },
+  "model": {
+    "bundle_sha256": "not applicable: direct forward stub",
+    "sequence_length": 32,
+    "feature_width": 1,
+    "numeric_backend": "direct CUDA FP32 forward stub"
+  },
+  "load": {
+    "duration_seconds": null,
+    "warmup_seconds": null,
+    "requests_per_second": null,
+    "arrival_distribution": "not applicable",
+    "queue_delay_microseconds": null,
+    "batch_size": 32,
+    "warmup_iterations": 100,
+    "measured_iterations_per_run": 2000,
+    "runs": 5
+  },
+  "results": {
+    "latency_microseconds": {
+      "mean": 42.0384,
+      "p50": 40.4,
+      "p90": 42.1,
+      "p95": null,
+      "p99": 58.1,
+      "p999": 265.5,
+      "max": 279.1
+    },
+    "throughput_per_second": null,
+    "error_rate": 0.0,
+    "fallback_rate": 0.0,
+    "int8_gemm_exact_match": true
+  },
+  "artifacts": ["cuda_component_runs_2627824.csv"]
+}

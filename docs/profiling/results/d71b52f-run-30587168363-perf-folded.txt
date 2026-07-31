@@ -1,0 +1,17 @@
+fraud_inference;_start;__libc_start_main;[libc.so.6];__sched_yield 338677352
+fraud_inference;_start;__libc_start_main;[libc.so.6];__sched_yield;[unknown];[unknown] 501002000
+fraud_inference;_start;__libc_start_main;[libc.so.6];__sched_yield;[unknown];[unknown];[unknown] 110220440
+fraud_inference;_start;__libc_start_main;[libc.so.6];__sched_yield;[unknown];[unknown];[unknown];[unknown] 108216432
+fraud_inference;_start;__libc_start_main;[libc.so.6];__sched_yield;[unknown];[unknown];[unknown];[unknown];[unknown] 328657312
+fraud_inference;_start;__libc_start_main;[libc.so.6];__sched_yield;[unknown];[unknown];[unknown];[unknown];[unknown];[unknown] 104208416
+fraud_inference;_start;__libc_start_main;[libc.so.6];__sched_yield;[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown] 1829659304
+fraud_inference;_start;__libc_start_main;[libc.so.6];fraud::daemon::monotonic_time_ns 116232464
+fraud_inference;_start;__libc_start_main;[libc.so.6];main 1501001992
+fraud_inference;_start;__libc_start_main;[libc.so.6];main;[libc.so.6] 2004008
+fraud_inference;_start;__libc_start_main;[libc.so.6];main;fraud::daemon::monotonic_time_ns;clock_gettime 66132264
+fraud_inference;_start;__libc_start_main;[libc.so.6];main;fraud::daemon::monotonic_time_ns;clock_gettime@plt 56112224
+fraud_inference;_start;__libc_start_main;[libc.so.6];main;fraud::daemon::monotonic_time_ns;std::chrono::_V2::steady_clock::now 234468936
+fraud_inference;_start;__libc_start_main;[libc.so.6];main;fraud::daemon::monotonic_time_ns;std::chrono::_V2::steady_clock::now;[[vdso]] 8016032
+fraud_inference;_start;__libc_start_main;[libc.so.6];main;fraud::daemon::monotonic_time_ns;std::chrono::_V2::steady_clock::now;clock_gettime;[[vdso]] 4635270504
+fraud_inference;_start;__libc_start_main;[libc.so.6];main;fraud::daemon::monotonic_time_ns;std::chrono::_V2::steady_clock::now;clock_gettime;[[vdso]];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown];[unknown] 2004008
+fraud_inference;_start;__libc_start_main;[libc.so.6];main;std::chrono::_V2::steady_clock::now 54108216

@@ -22,6 +22,17 @@ target/
 *.qdrep
 docs/profiling/results/*
 !docs/profiling/results/.gitkeep
+!docs/profiling/results/*.json
+!docs/profiling/results/*.csv
+!docs/profiling/results/*.svg
+!docs/profiling/results/*.txt
+!docs/profiling/results/*.nsys-rep
+
+# Generated TeX intermediates (the reviewed PDF is retained)
+docs/paper/*.aux
+docs/paper/*.log
+docs/paper/*.out
+docs/paper/*.toc
 
 # Python
 __pycache__/

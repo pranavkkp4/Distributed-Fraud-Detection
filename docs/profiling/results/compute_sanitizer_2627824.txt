@@ -1,0 +1,12 @@
+Command:
+  compute-sanitizer.bat --tool memcheck --error-exitcode 99 fraud_daemon_gpu_benchmark.exe
+
+Commit tested: 2627824c5bb69773365e183f6e09686642c488f6
+GPU: NVIDIA GeForce RTX 3050 6 GiB; driver 595.79; CUDA 13.3.73
+
+Result:
+  INT8 CUTLASS GEMM matched the CPU INT32 oracle.
+  COMPUTE-SANITIZER ERROR SUMMARY: 0 errors
+
+Sanitizer-instrumented latency is intentionally excluded from the performance
+comparison because instrumentation materially changes execution time.
